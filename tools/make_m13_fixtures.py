@@ -10,6 +10,7 @@ crop of every frame, and of PixInsight's master frames, to tests/data/m13.
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,11 @@ WINDOW = (slice(TOP, TOP + SIZE), slice(LEFT, LEFT + SIZE))
 
 # Raw frame directories, as named in the session, and our name for each kind.
 KINDS = {"offset": "bias", "dark": "dark", "flat": "flat", "light": "light"}
+# A smaller window inside the first, on the cluster core, for the stage that
+# needs every light: the 43 registered frames, in colour.
+CORE_TOP, CORE_LEFT, CORE_SIZE = TOP + 80, LEFT + 80, 96
+CORE = (slice(CORE_TOP, CORE_TOP + CORE_SIZE), slice(CORE_LEFT, CORE_LEFT + CORE_SIZE))
+
 # Lights whose intermediate stages are kept as crops: the first (a stray 10 s
 # exposure at ISO 1600), one from the middle of the session and the last.
 SAMPLE_LIGHTS = ("2018-09-12-20_22_50", "2018-09-12-20_38_15", "2018-09-12-20_56_55")
@@ -149,6 +155,45 @@ def registration_matrices(log: str) -> dict[str, list[list[float]]]:
     }
 
 
+def registered_lights(log: str) -> None:
+    """Crops of all the registered lights, and what integration needs to know of each.
+
+    Integration normalises a frame by the level and scale of the whole frame
+    and weights it by the noise PixInsight measured after demosaicing, none
+    of which a crop can give.
+    """
+    directory = SESSION / "output" / "registered" / "m13"
+    names = integration_inputs(log, "light")
+    master = read_xisf(SESSION / "output" / "master" / MASTERS["light"])[0]
+    history = [text for key, text in master.keywords if key == "HISTORY"]
+    noise = [
+        [float(value) for value in match.group(1).split()]
+        for line in history
+        if (match := re.search(r"noiseEstimates_\d+: (.+)", line))
+    ]
+
+    def estimates(name: str) -> list[tuple[float, float]]:
+        data = read_xisf(directory / name)[0].data
+        return [ikss(np.asarray(data[..., channel])) for channel in range(3)]
+
+    with ThreadPoolExecutor(8) as pool:
+        per_frame = list(pool.map(estimates, names))
+    record = {
+        name: {
+            "location": [location for location, _ in frame],
+            "scale": [scale for _, scale in frame],
+            "noise": frame_noise,
+        }
+        for name, frame, frame_noise in zip(names, per_frame, noise, strict=True)
+    }
+    (OUTPUT / "reference" / "registered_light_estimates.json").write_text(
+        json.dumps(record, indent=1)
+    )
+    crops = {name: read_xisf(directory / name)[0].data[CORE] for name in names}
+    np.savez_compressed(OUTPUT / "reference" / "registered_light.npz", **crops)  # type: ignore[arg-type]
+    print(f"registered lights: {len(names)} frames")
+
+
 def crop_masters() -> None:
     (OUTPUT / "reference").mkdir(parents=True, exist_ok=True)
     log = next((SESSION / "output" / "logs").glob("*.log")).read_text()
@@ -187,3 +232,4 @@ if __name__ == "__main__":
     crop_masters()
     crop_calibrated_flats()
     crop_light_stages()
+    registered_lights(next((SESSION / "output" / "logs").glob("*.log")).read_text())

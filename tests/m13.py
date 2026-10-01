@@ -153,3 +153,28 @@ def registration_matrices() -> dict[str, npt.NDArray[np.float64]]:
         (DATA / "reference" / "registration.json").read_text()
     )
     return {name: np.array(matrix) for name, matrix in matrices.items()}
+
+
+# Where the registered-light crops sit inside the main fixture crop.
+CORE = (slice(80, 176), slice(80, 176))
+
+
+def registered_lights() -> npt.NDArray[np.float32]:
+    """Crops of all PixInsight's registered lights, (N, H, W, 3), in its integration order.
+
+    They cover the window CORE of the other crops.
+    """
+    with np.load(DATA / "reference" / "registered_light.npz") as arrays:
+        return np.stack([arrays[name] for name in master_inputs("light")])
+
+
+def registered_light_estimates(quantity: str) -> npt.NDArray[np.float64]:
+    """A per-frame, per-channel quantity of the full registered lights, (N, 3).
+
+    "location" and "scale" are our estimates over the whole frame; "noise" is
+    what PixInsight measured after demosaicing and carried in the file.
+    """
+    record: dict[str, dict[str, list[float]]] = json.loads(
+        (DATA / "reference" / "registered_light_estimates.json").read_text()
+    )
+    return np.array([record[name][quantity] for name in master_inputs("light")])

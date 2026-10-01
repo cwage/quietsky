@@ -1,6 +1,13 @@
 import numpy as np
 
-from starkiller.integrate import flux_gains, integrate, winsorized_sigma_clip
+from starkiller.integrate import (
+    flux_normalization,
+    frame_estimates,
+    integrate,
+    level_and_scale_normalization,
+    noise_weights,
+    winsorized_sigma_clip,
+)
 
 
 def noise(frames: int, pixels: int, seed: int = 1) -> np.ndarray:
@@ -93,17 +100,21 @@ def flats_of_varying_brightness() -> tuple[np.ndarray, np.ndarray]:
     return field * brightness[:, None, None] * noise, brightness
 
 
-def test_flux_gains_undo_the_change_in_brightness() -> None:
+def test_flux_normalization_undoes_the_change_in_brightness() -> None:
     stack, brightness = flats_of_varying_brightness()
 
-    np.testing.assert_allclose(flux_gains(stack), brightness[0] / brightness, rtol=2e-3)
+    normalization = flux_normalization(frame_estimates(stack)[0])
+
+    np.testing.assert_allclose(normalization.multiply, brightness[0] / brightness, rtol=2e-3)
+    assert not normalization.subtract.any()
+    assert normalization.add == 0
 
 
 def test_integrate_with_gains_combines_frames_at_the_level_of_the_first() -> None:
     stack, brightness = flats_of_varying_brightness()
     stack[6, 10, 10] *= 1.2  # a cosmic ray hit in one of the dimmer frames
 
-    result = integrate(stack, gains=brightness[0] / brightness)
+    result = integrate(stack, normalization=flux_normalization(brightness))
 
     rows, columns = np.mgrid[:32, :48]
     field = 0.5 - ((rows - 16) ** 2 + (columns - 24) ** 2) / 4000
@@ -119,3 +130,59 @@ def test_without_gains_an_outlier_in_a_dim_frame_goes_unnoticed() -> None:
     result = integrate(stack)
 
     assert result.rejection_high[10, 10] == 0
+
+
+def test_excluded_values_take_no_part_and_count_as_rejected() -> None:
+    stack = noise(12, 5)
+    excluded_low = np.zeros(stack.shape, np.bool_)
+    excluded_high = np.zeros(stack.shape, np.bool_)
+    stack[2, 1], excluded_low[2, 1] = 0.0, True  # black border of a registered frame
+    stack[9, 3], excluded_high[9, 3] = 1.0, True  # a saturated pixel
+
+    low, high = winsorized_sigma_clip(stack, 6, 6, excluded_low, excluded_high)
+
+    assert np.argwhere(low).tolist() == [[2, 1]]
+    assert np.argwhere(high).tolist() == [[9, 3]]
+
+
+def test_valid_range_keeps_black_borders_out_of_the_average() -> None:
+    stack = noise(12, 6 * 8).reshape(12, 6, 8)
+    stack[4, :, :2] = 0.0  # one frame shifted off this edge by registration
+    stack[:, 5, 7] = 0.0  # and a corner no frame covers
+
+    result = integrate(stack, 10, 10, valid_range=(0.0, 0.98))
+
+    expected = np.delete(stack, 4, axis=0)[:, :, :2].mean(axis=0)
+    np.testing.assert_allclose(result.image[:, :2], expected, rtol=1e-6)
+    assert result.image[5, 7] == 0
+    assert result.frame_rejected_low[4] >= 12
+
+
+def test_level_and_scale_normalization_matches_frames_to_the_first() -> None:
+    rng = np.random.default_rng(4)
+    sky = rng.normal(0, 1, (8, 20, 30))
+    levels = np.linspace(0.10, 0.14, 8)
+    scales = np.linspace(0.001, 0.002, 8)
+    stack = levels[:, None, None] + scales[:, None, None] * sky
+
+    normalization = level_and_scale_normalization(levels, scales)
+
+    result = integrate(stack, 1000, 1000, normalization=normalization)  # no rejection
+
+    np.testing.assert_allclose(result.image, 0.10 + 0.001 * sky.mean(axis=0), atol=1e-6)
+
+
+def test_noise_weights_favour_the_quieter_frames() -> None:
+    normalization = level_and_scale_normalization(np.array([0.1, 0.1, 0.1]), np.ones(3))
+
+    weights = noise_weights(np.array([2e-5, 1e-5, 4e-5]), normalization)
+
+    np.testing.assert_allclose(weights, [1.0, 4.0, 0.25])
+
+
+def test_weights_set_each_frames_share_of_the_average() -> None:
+    stack = np.stack([np.full((2, 2), 0.1), np.full((2, 2), 0.4)])
+
+    result = integrate(stack, weights=np.array([3.0, 1.0]))
+
+    np.testing.assert_allclose(result.image, 0.175, rtol=1e-6)
