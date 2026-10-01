@@ -5,6 +5,7 @@ import pytest
 from PIL import Image
 
 import m13
+from starkiller.calibrate import calibrate
 from starkiller.cli import main
 from starkiller.frame import load, normalized
 from starkiller.integrate import integrate
@@ -21,6 +22,42 @@ def test_stack_writes_the_integration_of_its_inputs(
     expected = integrate(normalized(m13.frames("bias")))
     np.testing.assert_array_equal(load(output).data, expected.image)
     assert "integrated 20 frames" in capsys.readouterr().out
+
+
+def test_calibrate_writes_each_frame_minus_bias_and_scaled_dark(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bias, dark = tmp_path / "bias.fits", tmp_path / "dark.fits"
+    main(["stack", *map(str, sorted((m13.DATA / "bias").glob("*.fits"))), "-o", str(bias)])
+    main(["stack", *map(str, sorted((m13.DATA / "dark").glob("*.fits"))), "-o", str(dark)])
+    flat = sorted((m13.DATA / "flat").glob("*.fits"))[0]
+
+    main(
+        ["calibrate", str(flat), "--bias", str(bias), "--dark", str(dark)]
+        + ["--dark-scale", "0.5", "-o", str(tmp_path / "calibrated")]
+    )
+
+    result = load(tmp_path / "calibrated" / f"{flat.stem}_c.fits")
+    expected = calibrate(normalized(load(flat).data), load(bias).data, load(dark).data, 0.5)
+    np.testing.assert_array_equal(result.data, expected)
+    assert result.header["DARKSCAL"] == 0.5
+    assert result.header["BAYERPAT"] == "RGGB"
+    assert "dark scale 0.500" in capsys.readouterr().out
+
+
+def test_calibrate_optimises_the_dark_scale_by_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bias, dark = tmp_path / "bias.fits", tmp_path / "dark.fits"
+    main(["stack", *map(str, sorted((m13.DATA / "bias").glob("*.fits"))), "-o", str(bias)])
+    main(["stack", *map(str, sorted((m13.DATA / "dark").glob("*.fits"))), "-o", str(dark)])
+    light = sorted((m13.DATA / "light").glob("*.fits"))[5]
+
+    main(["calibrate", str(light), "--bias", str(bias), "--dark", str(dark), "-o", str(tmp_path)])
+
+    scale = load(tmp_path / f"{light.stem}_c.fits").header["DARKSCAL"]
+    assert isinstance(scale, float)
+    assert 0.5 < scale < 2.5  # the lights ran somewhat warmer than the darks
 
 
 def test_preview_writes_a_stretched_png(tmp_path: Path) -> None:

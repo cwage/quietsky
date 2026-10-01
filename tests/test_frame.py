@@ -19,6 +19,19 @@ def test_fits_round_trip_keeps_integer_mosaic_and_header(tmp_path: Path) -> None
     assert loaded.header["EXPTIME"] == 30.0
 
 
+def test_header_of_an_integer_frame_can_be_reused_for_float_data(tmp_path: Path) -> None:
+    integer = tmp_path / "integer.fits"
+    save_fits(integer, Frame(np.array([[1000, 2000]], dtype=np.uint16), {"EXPTIME": 30.0}))
+    header = load(integer).header
+    data = np.array([[0.25, 0.5]], dtype=np.float32)
+    path = tmp_path / "float.fits"
+
+    save_fits(path, Frame(data, header))
+
+    np.testing.assert_array_equal(load(path).data, data)
+    assert load(path).header == {"EXPTIME": 30.0}
+
+
 def test_fits_round_trip_keeps_colour_channels_last(tmp_path: Path) -> None:
     data = np.random.default_rng(1).random((3, 4, 3), dtype=np.float32)
     path = tmp_path / "colour.fits"

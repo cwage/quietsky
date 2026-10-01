@@ -30,9 +30,14 @@ def as_pixinsight_loaded(data: npt.NDArray[np.uint16]) -> npt.NDArray[np.float32
     return ((data >> 2) / 65535).astype(np.float32)
 
 
+def frame_names(kind: str) -> list[str]:
+    """Names of the raw frames of one kind, without suffix, in time order."""
+    return [path.stem for path in sorted((DATA / kind).glob("*.fits"))]
+
+
 def frames(kind: str) -> npt.NDArray[np.uint16]:
     """The cropped raw frames of one kind, as an (N, H, W) stack in time order."""
-    return np.stack([load_fits(path).data for path in sorted((DATA / kind).glob("*.fits"))])
+    return np.stack([load_fits(DATA / kind / f"{name}.fits").data for name in frame_names(kind)])
 
 
 def master(kind: str) -> dict[str, npt.NDArray[Any]]:
@@ -90,3 +95,17 @@ def debayer_noise() -> dict[str, list[list[float]]]:
         (DATA / "reference" / "debayer_noise.json").read_text()
     )
     return noise
+
+
+def dark_scales(kind: str) -> dict[str, float]:
+    """The dark scaling factor PixInsight logged for each "flat" or "light" frame."""
+    scales: dict[str, dict[str, float]] = json.loads(
+        (DATA / "reference" / "dark_scales.json").read_text()
+    )
+    return scales[kind]
+
+
+def calibrated_flats() -> dict[str, npt.NDArray[np.float32]]:
+    """Crops of PixInsight's calibrated flats, by raw frame name."""
+    with np.load(DATA / "reference" / "calibrated_flat.npz") as arrays:
+        return dict(arrays)

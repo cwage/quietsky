@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from starkiller.calibrate import calibrate, optimize_dark
 from starkiller.frame import Frame, load, normalized, save_fits
 from starkiller.integrate import integrate
 from starkiller.stretch import autostretch
@@ -33,6 +34,22 @@ def _stack(args: argparse.Namespace) -> None:
     print(f"wrote {args.output}")
 
 
+def _calibrate(args: argparse.Namespace) -> None:
+    bias = normalized(load(args.bias).data)
+    dark = normalized(load(args.dark).data)
+    args.output.mkdir(parents=True, exist_ok=True)
+    for path in args.files:
+        frame = load(path)
+        data = normalized(frame.data)
+        scale = args.dark_scale
+        if scale is None:
+            scale = optimize_dark(data, bias, dark, mosaic="BAYERPAT" in frame.header)
+        calibrated = calibrate(data, bias, dark, scale)
+        output = args.output / f"{path.stem}_c.fits"
+        save_fits(output, Frame(calibrated, frame.header | {"DARKSCAL": round(scale, 4)}))
+        print(f"{output}: dark scale {scale:.3f}")
+
+
 def _preview(args: argparse.Namespace) -> None:
     stretched = autostretch(normalized(load(args.file).data))
     Image.fromarray((stretched * 255 + 0.5).astype(np.uint8)).save(args.output)
@@ -55,6 +72,22 @@ def main(argv: list[str] | None = None) -> None:
     stack.add_argument("--sigma-low", type=float, default=4.0)
     stack.add_argument("--sigma-high", type=float, default=3.0)
     stack.set_defaults(run=_stack)
+
+    calibration = commands.add_parser(
+        "calibrate", help="subtract a master bias and a scaled master dark from frames"
+    )
+    calibration.add_argument("files", nargs="+", type=Path)
+    calibration.add_argument("--bias", type=Path, required=True, help="master bias")
+    calibration.add_argument("--dark", type=Path, required=True, help="master dark")
+    calibration.add_argument(
+        "--dark-scale",
+        type=float,
+        help="factor to scale the dark by (default: the factor that minimises noise)",
+    )
+    calibration.add_argument(
+        "-o", "--output", type=Path, required=True, help="directory for the calibrated frames"
+    )
+    calibration.set_defaults(run=_calibrate)
 
     preview = commands.add_parser("preview", help="write an auto-stretched PNG of a frame")
     preview.add_argument("file", type=Path)

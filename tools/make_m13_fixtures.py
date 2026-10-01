@@ -79,6 +79,24 @@ def debayer_noise(log: str) -> dict[str, list[list[float]]]:
     }
 
 
+def dark_scales(log: str, kind: str) -> dict[str, float]:
+    """The dark scaling factor PixInsight chose for each calibrated frame."""
+    section = log.split(f"* Begin calibration of {kind} frames")[1]
+    section = section.split(f"* End calibration of {kind} frames")[0]
+    pairs = re.findall(r"Writing output file: \S*/(\S+)_c\.xisf\n.*?\n.*?k0 = (\S+)", section)
+    return {name: float(scale) for name, scale in pairs}
+
+
+def crop_calibrated_flats() -> None:
+    directory = SESSION / "output" / "calibrated" / "flat"
+    crops = {
+        path.name.removesuffix("_c.xisf"): read_xisf(path)[0].data[WINDOW]
+        for path in sorted(directory.glob("*_c.xisf"))
+    }
+    np.savez_compressed(OUTPUT / "reference" / "calibrated_flat.npz", **crops)  # type: ignore[arg-type]
+    print(f"calibrated flats: {len(crops)} frames")
+
+
 def crop_masters() -> None:
     (OUTPUT / "reference").mkdir(parents=True, exist_ok=True)
     log = next((SESSION / "output" / "logs").glob("*.log")).read_text()
@@ -96,6 +114,9 @@ def crop_masters() -> None:
         record = {"inputs": integration_inputs(log, kind), "history": history}
         (OUTPUT / "reference" / f"master_{kind}.json").write_text(json.dumps(record, indent=1))
         print(f"master {kind}")
+    scales = {kind: dark_scales(log, kind) for kind in ("flat", "light")}
+    (OUTPUT / "reference" / "dark_scales.json").write_text(json.dumps(scales, indent=1))
+    print(f"dark scales: {len(scales['flat'])} flats, {len(scales['light'])} lights")
     noise = debayer_noise(log)
     (OUTPUT / "reference" / "debayer_noise.json").write_text(json.dumps(noise, indent=1))
     print(f"debayer noise: {len(noise)} frames")
@@ -104,3 +125,4 @@ def crop_masters() -> None:
 if __name__ == "__main__":
     crop_frames()
     crop_masters()
+    crop_calibrated_flats()
