@@ -113,10 +113,16 @@ def crop_calibrated_flats() -> None:
 def crop_light_stages() -> None:
     """Crops of the sample lights after each stage of PixInsight's pipeline."""
     directory = SESSION / "output" / "calibrated" / "light"
-    calibrated = {
-        name: read_xisf(directory / f"{name}_c.xisf")[0].data[WINDOW] for name in SAMPLE_LIGHTS
+    stages = {
+        "calibrated_light": (directory, "_c"),
+        "cosmetized_light": (directory / "cosmetized", "_c_cc"),
     }
-    np.savez_compressed(OUTPUT / "reference" / "calibrated_light.npz", **calibrated)  # type: ignore[arg-type]
+    for stage, (folder, suffix) in stages.items():
+        crops = {
+            name: read_xisf(folder / f"{name}{suffix}.xisf")[0].data[WINDOW]
+            for name in SAMPLE_LIGHTS
+        }
+        np.savez_compressed(OUTPUT / "reference" / f"{stage}.npz", **crops)  # type: ignore[arg-type]
     print(f"light stages: {len(SAMPLE_LIGHTS)} frames")
 
 
