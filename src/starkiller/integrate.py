@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from starkiller.estimators import ikss
+
 Float = npt.NDArray[np.float64]
 Bool = npt.NDArray[np.bool_]
 Index = npt.NDArray[np.int64]
@@ -81,6 +83,10 @@ def _winsorized_sigma(values: Float, mask: Bool, lo: Index, n: Index) -> tuple[F
                 break
             t0 = w_median - WINSOR_CUTOFF * w_sigma
             t1 = w_median + WINSOR_CUTOFF * w_sigma
+            # PixInsight holds the stack as 32-bit samples, so the clipped
+            # values are rounded to that precision.
+            t0 = t0.astype(np.float32).astype(np.float64)
+            t1 = t1.astype(np.float32).astype(np.float64)
             w = np.clip(w, t0, t1)
             previous = w_sigma
             w_sigma = WINSOR_SIGMA_CORRECTION * _std(w, w_mask, w_n)
@@ -155,17 +161,31 @@ def winsorized_sigma_clip(
     return rejected_low, rejected_high
 
 
+def flux_gains(stack: npt.NDArray[np.floating], workers: int | None = None) -> Float:
+    """Factors that bring every frame of a stack to the level of the first.
+
+    Flat frames taken against a changing light source differ in brightness
+    but not in shape, so they are matched by multiplication.
+    """
+    with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
+        locations = np.array(list(pool.map(lambda frame: ikss(frame)[0], stack)))
+    gains: Float = locations[0] / locations
+    return gains
+
+
 def integrate(
     stack: npt.NDArray[np.floating] | npt.NDArray[np.integer],
     sigma_low: float = 4.0,
     sigma_high: float = 3.0,
+    gains: Float | None = None,
     chunk_rows: int = 16,
     workers: int | None = None,
 ) -> Integration:
     """Average an (N, H, W) stack of frames, ignoring rejected pixels.
 
-    No normalisation or weighting is applied, which suits bias and dark
-    frames. The stack is processed chunk_rows rows at a time, on workers
+    Each frame is first multiplied by its entry in gains, if given; flats
+    need that (see flux_gains), bias and dark frames do not. Frames are not
+    weighted. The stack is processed chunk_rows rows at a time, on workers
     threads (one per CPU by default), to bound memory; it may be a
     memory-mapped array.
     """
@@ -179,6 +199,9 @@ def integrate(
     def integrate_rows(top: int) -> tuple[Index, Index]:
         rows = slice(top, min(top + chunk_rows, height))
         chunk = np.asarray(stack[:, rows, :], dtype=np.float64).reshape(frames, -1)
+        if gains is not None:
+            # Rounded to 32 bits, as PixInsight holds the scaled samples.
+            chunk = (chunk * gains[:, None]).astype(np.float32).astype(np.float64)
         low, high = winsorized_sigma_clip(chunk, sigma_low, sigma_high)
         kept = ~(low | high)
         mean = np.where(kept, chunk, 0.0).sum(axis=0) / kept.sum(axis=0)

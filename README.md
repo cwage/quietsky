@@ -9,10 +9,11 @@ line: the PixInsight workflow without the GUI.
 |---|---|
 | Read camera raw, FITS, XISF | done |
 | Integrate bias and dark frames (Winsorized sigma clipping) | done, matches PixInsight exactly |
+| Integrate flat frames (brightness matched) | done, bit-identical to PixInsight on all but 8 of 12 million pixels |
 | Location, scale and noise estimators | done, match PixInsight's recorded values |
 | Calibrate with master bias and scaled master dark | done; arithmetic matches, the automatic dark scale is about 6% above PixInsight's |
 | Auto-stretched previews | done |
-| Flat integration, flat division, cosmetic correction, debayer, registration, light integration | not started |
+| Flat division, cosmetic correction, debayer, registration, light integration | not started |
 
 The remaining steps are tracked as issues in the repository.
 
@@ -23,6 +24,7 @@ Everything runs in Docker.
     make build
     docker compose run --rm starkiller starkiller info FRAME...
     docker compose run --rm starkiller starkiller stack BIAS... -o master_bias.fits
+    docker compose run --rm starkiller starkiller stack --flat CALIBRATED_FLAT... -o master_flat.fits
     docker compose run --rm starkiller starkiller calibrate FRAME... --bias master_bias.fits --dark master_dark.fits -o calibrated/
     docker compose run --rm starkiller starkiller preview master_bias.fits -o master_bias.png
 
@@ -79,3 +81,7 @@ Things that had to be found out to get an exact match, and are easy to lose:
 - **Noise evaluation.** Our MRS estimate agrees with PixInsight's within
   0.02%; the last of its four printed digits differs by one in about one
   channel in nine.
+- **32-bit samples.** PixInsight keeps each pixel stack as 32-bit floats,
+  including after scaling a frame and after clipping during Winsorization.
+  Rounding at the same points is what makes the master flat bit-identical;
+  without it about one pixel in a million is rejected differently.

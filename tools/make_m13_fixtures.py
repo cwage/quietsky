@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from starkiller.estimators import ikss
 from starkiller.frame import Frame, load_raw, save_fits
 from starkiller.xisf import read_xisf
 
@@ -94,6 +95,15 @@ def crop_calibrated_flats() -> None:
         for path in sorted(directory.glob("*_c.xisf"))
     }
     np.savez_compressed(OUTPUT / "reference" / "calibrated_flat.npz", **crops)  # type: ignore[arg-type]
+    # Integration matches the flats' brightness using the level of each whole
+    # frame, which the crops alone cannot give.
+    locations = {
+        path.name.removesuffix("_c.xisf"): ikss(read_xisf(path)[0].data)[0]
+        for path in sorted(directory.glob("*_c.xisf"))
+    }
+    (OUTPUT / "reference" / "calibrated_flat_locations.json").write_text(
+        json.dumps(locations, indent=1)
+    )
     print(f"calibrated flats: {len(crops)} frames")
 
 

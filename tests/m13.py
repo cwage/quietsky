@@ -109,3 +109,11 @@ def calibrated_flats() -> dict[str, npt.NDArray[np.float32]]:
     """Crops of PixInsight's calibrated flats, by raw frame name."""
     with np.load(DATA / "reference" / "calibrated_flat.npz") as arrays:
         return dict(arrays)
+
+
+def calibrated_flat_locations() -> dict[str, float]:
+    """Location estimate of each of PixInsight's full calibrated flats, by raw frame name."""
+    locations: dict[str, float] = json.loads(
+        (DATA / "reference" / "calibrated_flat_locations.json").read_text()
+    )
+    return locations
