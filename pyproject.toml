@@ -3,6 +3,8 @@ name = "quietsky"
 version = "0.1.0"
 description = "Astronomical image calibration, stacking and processing from the command line"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "astropy>=7.0",
     "numpy>=2.1",
