@@ -20,6 +20,7 @@ line: the PixInsight workflow without the GUI.
 | Star matching and transformation | done; agrees with PixInsight's alignment to about 0.1 px |
 | Resampling (Lanczos-3 with clamping) | done; reproduces PixInsight's registered pixels to float precision once given its transformation |
 | Integrate registered lights (normalised, noise-weighted) | done; identical to PixInsight on the parts of the frame tested, apart from a rare difference of one unit in the last place |
+| Background extraction | done; our surface reproduces PixInsight's DBE model from its samples, and the automatic model is within about 5% of it |
 
 Open questions are tracked as issues in the repository.
 
@@ -40,7 +41,11 @@ For the M13 session in the archive, at the camera's full 14-bit depth (about
 
     docker compose run --rm starkiller starkiller preprocess --bias /data/2018-09-12/m13/offset --dark /data/2018-09-12/m13/dark --flat /data/2018-09-12/m13/flat --light /data/2018-09-12/m13/light -o out/m13
 
-The steps are also available one at a time:
+Then take the sky gradient out of the master light:
+
+    docker compose run --rm starkiller starkiller background out/session/master/light.fits -o out/session/master/light_bg.fits
+
+The preprocessing steps are also available one at a time:
 
     docker compose run --rm starkiller starkiller info FRAME...
     docker compose run --rm starkiller starkiller stack BIAS... -o master_bias.fits
@@ -75,6 +80,13 @@ regenerates it. Bias and dark integration works one pixel stack at a time, so
 the fast tests can compare our result on the crops with the crop of
 PixInsight's master. The tests marked `nas` repeat the comparison on the full
 frames and check the per-frame rejection counts from PixInsight's log.
+
+The reference for background extraction is an M27 session of 2018-09-14,
+whose PixInsight project (`2018-09-14/m27/m27.xosm`) records the
+DynamicBackgroundExtraction that was run: its 74 samples in the project
+file, and the image before and after in the project's data directory.
+`tests/data/m27` holds the samples and the background PixInsight subtracted;
+`tools/make_m27_fixtures.py` regenerates it.
 
 ## End to end
 
@@ -163,3 +175,21 @@ Things that had to be found out to get an exact match, and are easy to lose:
   made after demosaicing and carried in the file, not one made on the
   registered frame. Pixels at 0 or at 0.98 and above are rejected before
   clipping and count as rejected low or high.
+- **PixInsight projects.** The `.data` directory beside a project file
+  holds each image, and each earlier state in its history, as a file
+  starting `egamiwar`: width, height and channel count at byte 28, then per
+  channel a count of blocks, each block being two 64-bit sizes (stored and
+  original), a 16-byte digest and the data, zlib-compressed unless the sizes
+  are equal, with the four bytes of each sample stored apart.
+  `starkiller.pixinsight_project` reads them. The file saved as
+  `..._integration_DBE.xisf` in the M27 session is not the plain result of
+  DBE; it has further processing applied.
+- **Background extraction.** DBE's sample value is the plain mean of its
+  box, and its generator nudges samples off stars. Its model is a
+  thin-plate spline through the samples, in coordinates scaled to the unit
+  square, less its own median. Our kernel is r^2 ln r^2 with 0.05 x
+  smoothing added to the diagonal, which fits PixInsight's model for its
+  smoothing of 0.25 to 0.07% of the model's range; other smoothing values
+  are untested. Sample placement and rejection are our own: medians of
+  larger boxes on a fixed grid, dropping samples that stand above a
+  quadratic fit through all of them.

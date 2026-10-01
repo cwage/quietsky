@@ -163,6 +163,25 @@ def test_register_reports_frames_it_cannot_align(tmp_path: Path) -> None:
         main(["register", str(other), "--reference", str(reference), "-o", str(tmp_path / "out")])
 
 
+def test_background_writes_the_corrected_image_and_the_model(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rows, columns = np.mgrid[:300, :400]
+    image = synthetic.star_field((300, 400), 60)[0] + (0.005 * columns / 400).astype(np.float32)
+    source, output, model = tmp_path / "in.fits", tmp_path / "out.fits", tmp_path / "model.fits"
+    save_fits(source, Frame(image))
+
+    main(["background", str(source), "-o", str(output), "--model", str(model)])
+
+    corrected = load(output).data
+    left, right = np.median(corrected[:, :50]), np.median(corrected[:, -50:])
+    assert abs(right - left) < 0.0002
+    np.testing.assert_allclose(
+        load(model).data + corrected, image + np.median(load(model).data), atol=1e-6
+    )
+    assert "kept" in capsys.readouterr().out
+
+
 def test_preview_writes_a_stretched_png(tmp_path: Path) -> None:
     light = sorted((m13.DATA / "light").glob("*.fits"))[0]
     output = tmp_path / "light.png"
