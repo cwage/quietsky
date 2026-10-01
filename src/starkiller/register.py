@@ -28,6 +28,8 @@ SHAPE_TOLERANCE = 0.003
 # on successive refinements.
 MATCH_DISTANCES = (4.0, 2.0, 1.5, 1.5)
 MIN_PAIRS = 8
+# A pair of stars needs this many matching triangles to seed the solution.
+MIN_VOTES = 3
 
 
 class RegistrationError(Exception):
@@ -148,22 +150,29 @@ def _nearest_pairs(
 def solve_transformation(reference: Stars, target: Stars) -> Transformation:
     """Find the transformation from the reference frame to the target frame."""
     votes = _votes(reference, target)
-    # A true pair collects far more votes than any other pairing of either star.
+    # Start from the pairs that are each other's best match.
     best_for_ref = votes.argmax(axis=1)
-    confident = [
+    mutual = [
         (int(i), int(j))
         for i, j in enumerate(best_for_ref)
-        if votes[i, j] > 0
-        and votes[:, j].argmax() == i
-        and votes[i, j] >= 2 * np.sort(votes[i])[-2]
+        if votes[i, j] >= MIN_VOTES and votes[:, j].argmax() == i
     ]
-    if len(confident) < 3:
+    if len(mutual) < 3:
         raise RegistrationError("too few stars in common between the frames")
-    ref_index = np.array([i for i, _ in confident])
-    tgt_index = np.array([j for _, j in confident])
-    matrix = _fit_similarity(
-        reference.x[ref_index], reference.y[ref_index], target.x[tgt_index], target.y[tgt_index]
-    )
+    ref_index = np.array([i for i, _ in mutual])
+    tgt_index = np.array([j for _, j in mutual])
+    # Some of those are chance matches; fit, drop the pairs that disagree
+    # with the rest, and fit again.
+    for _ in range(3):
+        rx, ry = reference.x[ref_index], reference.y[ref_index]
+        tx, ty = target.x[tgt_index], target.y[tgt_index]
+        matrix = _fit_similarity(rx, ry, tx, ty)
+        u, v = _project(matrix, rx, ry)
+        error = np.hypot(u - tx, v - ty)
+        agree = error <= max(MATCH_DISTANCES[0], 2 * float(np.median(error)))
+        if agree.all() or agree.sum() < 3:
+            break
+        ref_index, tgt_index = ref_index[agree], tgt_index[agree]
 
     distances = np.empty(0)
     for distance in MATCH_DISTANCES:

@@ -32,6 +32,7 @@ testpaths = ["tests"]
 pythonpath = ["tests"]
 markers = [
     "nas: needs the full M13 data set mounted at $STARKILLER_DATA (slow)",
+    "slow: takes more than a few seconds",
 ]
 
 [tool.ruff]

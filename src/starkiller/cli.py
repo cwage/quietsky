@@ -4,21 +4,18 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-import numpy.typing as npt
 from PIL import Image
 
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import BAYER_PATTERNS, debayer_vng
-from starkiller.frame import Frame, load, normalized, save_fits
+from starkiller.frame import FITS_SUFFIXES, RAW_SUFFIXES, Frame, load, normalized, save_fits
 from starkiller.integrate import (
-    Integration,
     flux_normalization,
     frame_estimates,
     integrate,
-    level_and_scale_normalization,
-    noise_weights,
+    integrate_lights,
 )
-from starkiller.noise import evaluate_noise
+from starkiller.pipeline import Session, frame_noise, noise_keywords, preprocess
 from starkiller.register import RegistrationError, solve_transformation
 from starkiller.resample import resample
 from starkiller.stars import detect_stars
@@ -36,37 +33,14 @@ def _info(args: argparse.Namespace) -> None:
             print(f"  {key:8} {value}")
 
 
-# Pixels at or beyond these limits are black registration borders or
-# saturated, and are left out when lights are combined.
-LIGHT_RANGE = (0.0, 0.98)
-
-
-def _integrate_light_channel(
-    stack: npt.NDArray[np.float32], frames: list[Frame], channel: int, args: argparse.Namespace
-) -> Integration:
-    locations, scales = frame_estimates(stack)
-    normalization = level_and_scale_normalization(locations, scales)
-    # Noise measured before registration, which smooths it, if the frames carry it.
-    key = f"NOISE{channel:02d}"
-    if all(key in frame.header for frame in frames):
-        noise = np.array([float(frame.header[key]) for frame in frames])
-    else:
-        noise = np.array([evaluate_noise(image).sigma for image in stack])
-    weights = noise_weights(noise, normalization)
-    return integrate(
-        stack, args.sigma_low, args.sigma_high, normalization, weights, valid_range=LIGHT_RANGE
-    )
-
-
 def _stack(args: argparse.Namespace) -> None:
     frames = [load(path) for path in args.files]
     stack = np.stack([normalized(frame.data) for frame in frames])
     if args.light:
         channels = stack[..., None] if stack.ndim == 3 else stack
-        results = [
-            _integrate_light_channel(channels[..., channel], frames, channel, args)
-            for channel in range(channels.shape[-1])
-        ]
+        results = integrate_lights(
+            channels, frame_noise(frames, channels), args.sigma_low, args.sigma_high
+        )
         image = np.stack([result.image for result in results], axis=-1)
         image = image[..., 0] if stack.ndim == 3 else image
     else:
@@ -108,10 +82,7 @@ def _debayer(args: argparse.Namespace) -> None:
             raise SystemExit(f"{path}: no BAYERPAT in the header; give --pattern")
         header = {key: value for key, value in frame.header.items() if key != "BAYERPAT"}
         rgb = debayer_vng(normalized(frame.data), pattern)
-        # Recorded now because registration will smooth the noise; light
-        # integration weights frames by it.
-        for channel in range(3):
-            header[f"NOISE{channel:02d}"] = evaluate_noise(rgb[..., channel]).sigma
+        header |= noise_keywords(rgb)
         output = args.output / f"{path.stem}_d.fits"
         save_fits(output, Frame(rgb, header))
         print(f"{output}: {pattern}")
@@ -136,6 +107,18 @@ def _register(args: argparse.Namespace) -> None:
         print(f"{output}: {transformation.pairs} stars matched, rms {transformation.rms:.2f} px")
     if failed:
         raise SystemExit(f"{failed} frame(s) could not be registered")
+
+
+def _frames_in(directory: Path) -> list[Path]:
+    suffixes = RAW_SUFFIXES | FITS_SUFFIXES | {".xisf"}
+    return sorted(path for path in directory.iterdir() if path.suffix.lower() in suffixes)
+
+
+def _preprocess(args: argparse.Namespace) -> None:
+    session = Session(
+        _frames_in(args.bias), _frames_in(args.dark), _frames_in(args.flat), _frames_in(args.light)
+    )
+    preprocess(session, args.output)
 
 
 def _preview(args: argparse.Namespace) -> None:
@@ -210,6 +193,20 @@ def main(argv: list[str] | None = None) -> None:
         "-o", "--output", type=Path, required=True, help="directory for the aligned frames"
     )
     register.set_defaults(run=_register)
+
+    whole = commands.add_parser(
+        "preprocess",
+        help="run the whole pipeline on a session: masters, calibration, debayer, "
+        "registration and integration",
+    )
+    for name in ("bias", "dark", "flat", "light"):
+        whole.add_argument(
+            f"--{name}", type=Path, required=True, help=f"directory of {name} frames"
+        )
+    whole.add_argument(
+        "-o", "--output", type=Path, required=True, help="directory for masters and aligned lights"
+    )
+    whole.set_defaults(run=_preprocess)
 
     preview = commands.add_parser("preview", help="write an auto-stretched PNG of a frame")
     preview.add_argument("file", type=Path)

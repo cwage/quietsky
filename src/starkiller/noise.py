@@ -16,6 +16,7 @@ from starkiller.wavelets import B3_NOISE_PER_LAYER, b3_layers
 # A coefficient is significant above this many noise deviations.
 SIGNIFICANCE = 3.0
 MRS_TOLERANCE = 1e-4
+MRS_MAX_ITERATIONS = 50
 # The noise pixels are those within three sigma at every scale, so their
 # spread understates the noise by this factor.
 MRS_BIAS = 0.974
@@ -51,7 +52,9 @@ def noise_mrs(image: npt.NDArray[np.floating], layer_count: int = 4) -> Noise:
     detail = image - residual
 
     sigma = _k_sigma(layers[0][in_range]) / B3_NOISE_PER_LAYER[0]
-    while True:
+    count = 0
+    # On small or crowded images the estimate can cycle without settling.
+    for _ in range(MRS_MAX_ITERATIONS):
         noise = in_range.copy()
         for layer, per_layer in zip(layers, B3_NOISE_PER_LAYER, strict=False):
             noise &= np.abs(layer) < SIGNIFICANCE * sigma * per_layer
@@ -60,7 +63,8 @@ def noise_mrs(image: npt.NDArray[np.floating], layer_count: int = 4) -> Noise:
             return Noise(sigma, 0.0)
         previous, sigma = sigma, float(detail[noise].std(dtype=np.float64, ddof=1))
         if abs(previous - sigma) / previous < MRS_TOLERANCE:
-            return Noise(sigma / MRS_BIAS, count / image.size)
+            break
+    return Noise(sigma / MRS_BIAS, count / image.size)
 
 
 def evaluate_noise(image: npt.NDArray[np.floating]) -> Noise:

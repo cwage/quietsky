@@ -13,6 +13,7 @@ line: the PixInsight workflow without the GUI.
 | Location, scale and noise estimators | done, match PixInsight's recorded values |
 | Calibrate with master bias, scaled master dark and master flat | done; arithmetic matches, the automatic dark scale is about 6% above PixInsight's |
 | Auto-stretched previews | done |
+| One command for a whole session (`preprocess`) | done |
 | Cosmetic correction | partly: PixInsight's replacement value is matched; hot pixels are found from the master dark, not by PixInsight's automatic rule |
 | Debayer (VNG) | done, identical to PixInsight at all but about 30 pixels of a frame |
 | Star detection | done; our own detector, positions good to a tenth of a pixel on synthetic fields |
@@ -20,13 +21,27 @@ line: the PixInsight workflow without the GUI.
 | Resampling (Lanczos-3 with clamping) | done; reproduces PixInsight's registered pixels to float precision once given its transformation |
 | Integrate registered lights (normalised, noise-weighted) | done; identical to PixInsight on the parts of the frame tested, apart from a rare difference of one unit in the last place |
 
-The remaining steps are tracked as issues in the repository.
+Open questions are tracked as issues in the repository.
 
 ## Running
 
-Everything runs in Docker.
+Everything runs in Docker. A whole session in one go:
 
     make build
+    docker compose run --rm starkiller starkiller preprocess --bias BIAS_DIR --dark DARK_DIR --flat FLAT_DIR --light LIGHT_DIR -o out/session
+
+That writes the four master frames and a stretched preview of the master
+light to `out/session/master`, and the aligned lights to
+`out/session/registered`. Lights are aligned to the first one. Hot pixels
+are not corrected.
+
+For the M13 session in the archive, at the camera's full 14-bit depth (about
+20 minutes for its 103 frames):
+
+    docker compose run --rm starkiller starkiller preprocess --bias /data/2018-09-12/m13/offset --dark /data/2018-09-12/m13/dark --flat /data/2018-09-12/m13/flat --light /data/2018-09-12/m13/light -o out/m13
+
+The steps are also available one at a time:
+
     docker compose run --rm starkiller starkiller info FRAME...
     docker compose run --rm starkiller starkiller stack BIAS... -o master_bias.fits
     docker compose run --rm starkiller starkiller calibrate FLAT... --bias master_bias.fits --dark master_dark.fits -o flats/
@@ -43,7 +58,7 @@ The container sees the project at `/app` and the picture archive read-only at
 ## Checks
 
     make check      # lint, type check, fast tests
-    make test-all   # also the full-frame comparisons, which read the archive
+    make test-all   # also the slow tests and the full-frame comparisons, which read the archive
 
 ## Test data
 
@@ -60,6 +75,24 @@ regenerates it. Bias and dark integration works one pixel stack at a time, so
 the fast tests can compare our result on the crops with the crop of
 PixInsight's master. The tests marked `nas` repeat the comparison on the full
 frames and check the per-frame rejection counts from PixInsight's log.
+
+## End to end
+
+`tools/compare_m13_end_to_end.py` runs `preprocess` on the 103 raw frames of
+the M13 session, loaded as PixInsight loaded them, and compares the master
+light with PixInsight's over the part of the frame every light covers:
+
+| Channel | Correlation | Level, ours / PixInsight | RMS difference |
+|---|---|---|---|
+| R | 0.99955 | 1.0002 | 0.21% of the pixel value, 0.21 of the background noise |
+| G | 0.99873 | 1.0000 | 0.23% of the pixel value, 0.27 of the background noise |
+| B | 0.99919 | 1.0001 | 0.23% of the pixel value, 0.28 of the background noise |
+
+The remaining difference comes from the steps that do not match PixInsight
+exactly: the dark scaling factor, the transformation of each light (about a
+tenth of a pixel), and the uncorrected hot pixels. The run took 19 minutes
+on 16 cores while sharing them with another run; PixInsight took 15 and a
+half minutes in 2018.
 
 ## Matching PixInsight
 

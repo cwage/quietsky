@@ -280,3 +280,34 @@ def integrate(
             frame_high += high_counts
 
     return Integration(image, rejection_low, rejection_high, frame_low, frame_high)
+
+
+# Pixels at or beyond these limits are black registration borders or
+# saturated, and are left out when lights are combined.
+LIGHT_RANGE = (0.0, 0.98)
+
+
+def integrate_lights(
+    stack: npt.NDArray[np.floating],
+    noise: Float,
+    sigma_low: float = 4.0,
+    sigma_high: float = 3.0,
+) -> list[Integration]:
+    """Integrate registered lights, one result per colour channel.
+
+    stack is (N, H, W, C) and noise the (N, C) noise of each frame's
+    channels, ideally measured before registration, which smooths it. Each
+    channel is normalised in level and scale to the first frame, weighted by
+    noise and cleared of black and saturated pixels.
+    """
+    results = []
+    for channel in range(stack.shape[-1]):
+        frames = stack[..., channel]
+        normalization = level_and_scale_normalization(*frame_estimates(frames))
+        weights = noise_weights(noise[:, channel], normalization)
+        results.append(
+            integrate(
+                frames, sigma_low, sigma_high, normalization, weights, valid_range=LIGHT_RANGE
+            )
+        )
+    return results
