@@ -9,4 +9,7 @@ services:
     volumes:
       - .:/app
       # Source frames and PixInsight reference output, never written to.
-      - "${QUIETSKY_DATA_DIR:-/mnt/nas/Pictures}:/data:ro"
+      - "${QUIETSKY_DATA_DIR:-./data}:/data:ro"
+      # The same frames are inside the project mount above when data is a
+      # directory of the checkout; keep that path read-only too.
+      - "${QUIETSKY_DATA_DIR:-./data}:/app/data:ro"
