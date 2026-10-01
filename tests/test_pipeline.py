@@ -142,3 +142,36 @@ def test_reference_aligns_a_second_run_to_the_first(tmp_path: Path) -> None:
     separation = np.hypot(two.x[:, None] - one.x[None, :], two.y[:, None] - one.y[None, :]).min(1)
     assert (separation < 1).sum() >= 25
     assert np.median(separation[separation < 1]) < 0.3
+
+
+@pytest.mark.slow
+def test_masters_made_elsewhere_are_used_as_they_are(tmp_path: Path) -> None:
+    lights = frames("light")[:3]
+    quiet: list[str] = []
+    first = preprocess(
+        Session(frames("bias"), frames("dark"), frames("flat"), lights),
+        tmp_path / "a",
+        report=quiet.append,
+    )
+    masters = tmp_path / "a" / "master"
+    reports: list[str] = []
+
+    second = preprocess(
+        Session(
+            [],
+            [],
+            [],
+            lights,
+            master_bias=masters / "bias.fits",
+            master_dark=masters / "dark.fits",
+            master_flat=masters / "flat.fits",
+        ),
+        tmp_path / "b",
+        report=reports.append,
+    )
+
+    assert any(line == "master flat from flat.fits" for line in reports)
+    np.testing.assert_array_equal(load(second).data, load(first).data)
+    np.testing.assert_array_equal(
+        load(tmp_path / "b" / "master" / "flat.fits").data, load(masters / "flat.fits").data
+    )
