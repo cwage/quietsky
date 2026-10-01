@@ -78,7 +78,7 @@ def sample_background(
     Each sample is the median of a box of side 2 * radius + 1, which ignores
     the stars inside it. Samples that still stand above their neighbours,
     because they sit on a nebula, a galaxy or a cluster, are marked as not
-    kept.
+    kept, as are samples in the black border a registered frame can have.
     """
     height, width = image.shape[:2]
     columns = np.linspace(radius, width - 1 - radius, samples_per_row + 1).round().astype(int)
@@ -96,7 +96,11 @@ def sample_background(
         dtype=np.float64,
     ).reshape(len(x), -1)
     fx, fy = x / width, y / height
-    kept = ~_objects(fx, fy, values)
+    # A registered frame is zero where no light covered it; a sample there
+    # is not sky and would bend every fit towards it.
+    empty = (values <= 0).any(axis=1)
+    kept = ~empty
+    kept[~empty] = ~_objects(fx[~empty], fy[~empty], values[~empty])
     terms = _quadratic_terms(fx, fy)
     structure = 0.0
     for channel in range(values.shape[1]):
