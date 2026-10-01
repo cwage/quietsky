@@ -68,8 +68,10 @@ The preprocessing steps are also available one at a time:
     docker compose run --rm quietsky quietsky stack --light registered/*.fits -o master_light.fits
     docker compose run --rm quietsky quietsky preview master_light.fits -o master_light.png
 
-The container sees the project at `/app` and the picture archive read-only at
-`/data` (`/mnt/nas/Pictures` unless `QUIETSKY_DATA_DIR` says otherwise).
+The container sees the project at `/app` and your frames read-only at
+`/data`. That is the `data` directory of the checkout unless
+`QUIETSKY_DATA_DIR` names another; `data` is ignored by git and may be a
+symbolic link to wherever your pictures live.
 
 ## Checks
 
@@ -124,7 +126,7 @@ sessions have been run to see what that left untested. Neither has
 PixInsight output, so they show that the pipeline works, not that it
 matches anything.
 
-**M81, 2019-04-16** (`laptoppics/old2/old/20190417`): a cooled mono ZWO
+**M81, 2019-04-16**: a cooled mono ZWO
 ASI1600MM Pro at 430 mm, 16-megapixel FITS files from N.I.N.A., 20 lights of
 120 s in each of L, R, G and B, 20 darks, 10 flats per filter, no bias. Each
 filter went through `preprocess` on its own, the colour filters with
