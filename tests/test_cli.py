@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 
 import m13
-from starkiller.calibrate import calibrate
+from starkiller.calibrate import calibrate, unit_flat
 from starkiller.cli import main
 from starkiller.frame import load, normalized
 from starkiller.integrate import flux_gains, integrate
@@ -54,6 +54,30 @@ def test_calibrate_writes_each_frame_minus_bias_and_scaled_dark(
     assert result.header["DARKSCAL"] == 0.5
     assert result.header["BAYERPAT"] == "RGGB"
     assert "dark scale 0.500" in capsys.readouterr().out
+
+
+def test_calibrate_divides_by_a_flat_scaled_to_unit_mean(tmp_path: Path) -> None:
+    bias, dark, flat = tmp_path / "bias.fits", tmp_path / "dark.fits", tmp_path / "flat.fits"
+    main(["stack", *map(str, sorted((m13.DATA / "bias").glob("*.fits"))), "-o", str(bias)])
+    main(["stack", *map(str, sorted((m13.DATA / "dark").glob("*.fits"))), "-o", str(dark)])
+    main(
+        ["stack", "--flat", *map(str, sorted((m13.DATA / "flat").glob("*.fits"))), "-o", str(flat)]
+    )
+    light = sorted((m13.DATA / "light").glob("*.fits"))[5]
+
+    main(
+        ["calibrate", str(light), "--bias", str(bias), "--dark", str(dark), "--flat", str(flat)]
+        + ["--dark-scale", "1.0", "-o", str(tmp_path)]
+    )
+
+    expected = calibrate(
+        normalized(load(light).data),
+        load(bias).data,
+        load(dark).data,
+        1.0,
+        unit_flat(load(flat).data),
+    )
+    np.testing.assert_array_equal(load(tmp_path / f"{light.stem}_c.fits").data, expected)
 
 
 def test_calibrate_optimises_the_dark_scale_by_default(

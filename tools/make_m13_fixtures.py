@@ -28,6 +28,9 @@ WINDOW = (slice(TOP, TOP + SIZE), slice(LEFT, LEFT + SIZE))
 
 # Raw frame directories, as named in the session, and our name for each kind.
 KINDS = {"offset": "bias", "dark": "dark", "flat": "flat", "light": "light"}
+# Lights whose intermediate stages are kept as crops: the first (a stray 10 s
+# exposure at ISO 1600), one from the middle of the session and the last.
+SAMPLE_LIGHTS = ("2018-09-12-20_22_50", "2018-09-12-20_38_15", "2018-09-12-20_56_55")
 MASTERS = {
     "bias": "bias-BINNING_1.xisf",
     "dark": "dark-BINNING_1-EXPTIME_30.xisf",
@@ -107,6 +110,16 @@ def crop_calibrated_flats() -> None:
     print(f"calibrated flats: {len(crops)} frames")
 
 
+def crop_light_stages() -> None:
+    """Crops of the sample lights after each stage of PixInsight's pipeline."""
+    directory = SESSION / "output" / "calibrated" / "light"
+    calibrated = {
+        name: read_xisf(directory / f"{name}_c.xisf")[0].data[WINDOW] for name in SAMPLE_LIGHTS
+    }
+    np.savez_compressed(OUTPUT / "reference" / "calibrated_light.npz", **calibrated)  # type: ignore[arg-type]
+    print(f"light stages: {len(SAMPLE_LIGHTS)} frames")
+
+
 def crop_masters() -> None:
     (OUTPUT / "reference").mkdir(parents=True, exist_ok=True)
     log = next((SESSION / "output" / "logs").glob("*.log")).read_text()
@@ -124,6 +137,11 @@ def crop_masters() -> None:
         record = {"inputs": integration_inputs(log, kind), "history": history}
         (OUTPUT / "reference" / f"master_{kind}.json").write_text(json.dumps(record, indent=1))
         print(f"master {kind}")
+    # Dividing by the flat scales it by the mean of the whole master flat.
+    flat = read_xisf(SESSION / "output" / "master" / MASTERS["flat"])[0].data
+    (OUTPUT / "reference" / "master_flat_mean.json").write_text(
+        json.dumps(float(flat.mean(dtype=np.float64)))
+    )
     scales = {kind: dark_scales(log, kind) for kind in ("flat", "light")}
     (OUTPUT / "reference" / "dark_scales.json").write_text(json.dumps(scales, indent=1))
     print(f"dark scales: {len(scales['flat'])} flats, {len(scales['light'])} lights")
@@ -136,3 +154,4 @@ if __name__ == "__main__":
     crop_frames()
     crop_masters()
     crop_calibrated_flats()
+    crop_light_stages()
