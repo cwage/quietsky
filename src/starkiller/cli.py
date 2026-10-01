@@ -10,6 +10,9 @@ from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import BAYER_PATTERNS, debayer_vng
 from starkiller.frame import Frame, load, normalized, save_fits
 from starkiller.integrate import flux_gains, integrate
+from starkiller.register import RegistrationError, solve_transformation
+from starkiller.resample import resample
+from starkiller.stars import detect_stars
 from starkiller.stretch import autostretch
 
 
@@ -64,6 +67,27 @@ def _debayer(args: argparse.Namespace) -> None:
         output = args.output / f"{path.stem}_d.fits"
         save_fits(output, Frame(debayer_vng(normalized(frame.data), pattern), header))
         print(f"{output}: {pattern}")
+
+
+def _register(args: argparse.Namespace) -> None:
+    reference = detect_stars(normalized(load(args.reference).data))
+    print(f"{args.reference}: reference, {len(reference)} stars")
+    args.output.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for path in args.files:
+        frame = load(path)
+        data = normalized(frame.data)
+        try:
+            transformation = solve_transformation(reference, detect_stars(data))
+        except RegistrationError as error:
+            print(f"{path}: skipped, {error}")
+            failed += 1
+            continue
+        output = args.output / f"{path.stem}_r.fits"
+        save_fits(output, Frame(resample(data, transformation.matrix), frame.header))
+        print(f"{output}: {transformation.pairs} stars matched, rms {transformation.rms:.2f} px")
+    if failed:
+        raise SystemExit(f"{failed} frame(s) could not be registered")
 
 
 def _preview(args: argparse.Namespace) -> None:
@@ -121,6 +145,16 @@ def main(argv: list[str] | None = None) -> None:
         "-o", "--output", type=Path, required=True, help="directory for the RGB frames"
     )
     debayer.set_defaults(run=_debayer)
+
+    register = commands.add_parser(
+        "register", help="align frames to a reference frame by their stars"
+    )
+    register.add_argument("files", nargs="+", type=Path)
+    register.add_argument("--reference", type=Path, required=True, help="frame to align to")
+    register.add_argument(
+        "-o", "--output", type=Path, required=True, help="directory for the aligned frames"
+    )
+    register.set_defaults(run=_register)
 
     preview = commands.add_parser("preview", help="write an auto-stretched PNG of a frame")
     preview.add_argument("file", type=Path)

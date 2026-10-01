@@ -17,7 +17,8 @@ line: the PixInsight workflow without the GUI.
 | Debayer (VNG) | done, identical to PixInsight at all but about 30 pixels of a frame |
 | Star detection | done; our own detector, positions good to a tenth of a pixel on synthetic fields |
 | Star matching and transformation | done; agrees with PixInsight's alignment to about 0.1 px |
-| Resampling, light integration | not started |
+| Resampling (Lanczos-3 with clamping) | done; reproduces PixInsight's registered pixels to float precision once given its transformation |
+| Light integration | not started |
 
 The remaining steps are tracked as issues in the repository.
 
@@ -32,6 +33,7 @@ Everything runs in Docker.
     docker compose run --rm starkiller starkiller stack --flat flats/*.fits -o master_flat.fits
     docker compose run --rm starkiller starkiller calibrate LIGHT... --bias master_bias.fits --dark master_dark.fits --flat master_flat.fits -o lights/
     docker compose run --rm starkiller starkiller debayer lights/*.fits -o rgb/
+    docker compose run --rm starkiller starkiller register rgb/*.fits --reference rgb/FIRST_d.fits -o registered/
     docker compose run --rm starkiller starkiller preview master_bias.fits -o master_bias.png
 
 The container sees the project at `/app` and the picture archive read-only at
@@ -116,3 +118,6 @@ Things that had to be found out to get an exact match, and are easy to lose:
   reproduce a registered frame. The registered frames themselves show what
   was applied; by our star positions they agree with our transformations to
   about a tenth of a pixel.
+- **Interpolation.** Lanczos-3 with clamping threshold c = 0.3: the negative
+  lobes' contribution is left alone while it is under c times the positive
+  lobes', and scaled by 1 - ((r - c) / (1 - c))^2 for a ratio r above that.

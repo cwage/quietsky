@@ -5,11 +5,13 @@ import pytest
 from PIL import Image
 
 import m13
+import synthetic
 from starkiller.calibrate import calibrate, unit_flat
 from starkiller.cli import main
 from starkiller.debayer import debayer_vng
-from starkiller.frame import load, normalized
+from starkiller.frame import Frame, load, normalized, save_fits
 from starkiller.integrate import flux_gains, integrate
+from starkiller.stars import detect_stars
 
 
 def test_stack_writes_the_integration_of_its_inputs(
@@ -105,6 +107,36 @@ def test_debayer_writes_rgb_frames_using_the_pattern_in_the_header(tmp_path: Pat
     np.testing.assert_array_equal(result.data, debayer_vng(normalized(load(light).data), "RGGB"))
     assert "BAYERPAT" not in result.header
     assert result.header["EXPTIME"] == 30.0
+
+
+def test_register_aligns_frames_to_the_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    shape = (300, 400)
+    _, x, y = synthetic.star_field(shape, 100)
+    flux = 10 ** np.random.default_rng(5).uniform(-1.0, 0.3, len(x))
+    reference, shifted = tmp_path / "reference.fits", tmp_path / "shifted.fits"
+    save_fits(reference, Frame(synthetic.render(shape, x, y, flux, noise_seed=1)))
+    save_fits(shifted, Frame(synthetic.render(shape, x + 6.5, y - 3.25, flux, noise_seed=2)))
+
+    main(["register", str(shifted), "--reference", str(reference), "-o", str(tmp_path / "out")])
+
+    aligned = detect_stars(load(tmp_path / "out" / "shifted_r.fits").data)
+    stars = detect_stars(load(reference).data)
+    separation = np.hypot(
+        aligned.x[:, None] - stars.x[None, :], aligned.y[:, None] - stars.y[None, :]
+    )
+    assert np.median(separation.min(axis=1)) < 0.05
+    assert "stars matched" in capsys.readouterr().out
+
+
+def test_register_reports_frames_it_cannot_align(tmp_path: Path) -> None:
+    reference, other = tmp_path / "reference.fits", tmp_path / "other.fits"
+    save_fits(reference, Frame(synthetic.star_field((300, 400), 80, seed=1)[0]))
+    save_fits(other, Frame(synthetic.star_field((300, 400), 80, seed=2)[0]))
+
+    with pytest.raises(SystemExit, match="1 frame"):
+        main(["register", str(other), "--reference", str(reference), "-o", str(tmp_path / "out")])
 
 
 def test_preview_writes_a_stretched_png(tmp_path: Path) -> None:
