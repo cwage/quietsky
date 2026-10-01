@@ -16,7 +16,8 @@ line: the PixInsight workflow without the GUI.
 | Cosmetic correction | partly: PixInsight's replacement value is matched; hot pixels are found from the master dark, not by PixInsight's automatic rule |
 | Debayer (VNG) | done, identical to PixInsight at all but about 30 pixels of a frame |
 | Star detection | done; our own detector, positions good to a tenth of a pixel on synthetic fields |
-| Star matching, resampling, light integration | not started |
+| Star matching and transformation | done; agrees with PixInsight's alignment to about 0.1 px |
+| Resampling, light integration | not started |
 
 The remaining steps are tracked as issues in the repository.
 
@@ -108,3 +109,10 @@ Things that had to be found out to get an exact match, and are easy to lose:
   PixInsight's output, which showed two weights to be wrong; it has not been
   compared with dcraw's source. The outermost two pixels repeat the nearest
   pixel inside them.
+- **Registration matrices.** PixInsight fits a projective transformation
+  and prints it with six decimals. That rounds the two perspective terms to
+  zero, yet terms of that size still move the frame corners by more than a
+  pixel, so the printed matrix cannot be used to check a solution or to
+  reproduce a registered frame. The registered frames themselves show what
+  was applied; by our star positions they agree with our transformations to
+  about a tenth of a pixel.
