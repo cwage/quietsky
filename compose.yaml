@@ -1,0 +1,12 @@
+services:
+  starkiller:
+    build: .
+    image: starkiller:dev
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    environment:
+      STARKILLER_DATA: /data
+    volumes:
+      - .:/app
+      # Source frames and PixInsight reference output, never written to.
+      - "${STARKILLER_DATA_DIR:-/mnt/nas/Pictures}:/data:ro"
