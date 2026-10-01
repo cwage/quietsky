@@ -151,6 +151,22 @@ def test_unknown_models_are_refused() -> None:
         extract_background(field_with_gradient(), model="cubic")
 
 
+def test_the_black_border_of_a_registered_frame_is_not_sky() -> None:
+    image = field_with_gradient()
+    image[:60] = 0.0  # no frame covered the top after alignment
+
+    corrected, model, samples = extract_background(image)
+
+    assert not samples.kept[samples.y < 60].any()
+    assert samples.kept[samples.y >= 60].mean() > 0.9
+    assert samples.structure < 1.5
+    # Below the border the result is as if the border were not there.
+    levels = np.median(corrected[100:400].reshape(6, 50, 12, 50), axis=(1, 3))
+    assert np.ptp(levels) < 2 * synthetic.NOISE / 10
+    reference = extract_background(field_with_gradient())[1]
+    assert np.abs(model[100:] - reference[100:]).max() < synthetic.NOISE
+
+
 def test_mono_and_colour_images_keep_their_shape() -> None:
     image = field_with_gradient()
     colour = np.stack([image, 0.8 * image, 0.6 * image], axis=-1)

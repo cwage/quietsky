@@ -51,7 +51,8 @@ That fits a spline through samples of the sky, which is right when most of
 the frame is sky. If the target fills the frame, add `--model plane`: the
 spline would follow the target and remove it. The command warns when the
 samples look like more than sky, but it cannot tell a featureless glow from
-a gradient, so this is yours to judge.
+a gradient, and a strong gradient with a slightly non-quadratic shape can
+set it off (the blue M81 master does), so this is yours to judge.
 
 The preprocessing steps are also available one at a time:
 
@@ -133,6 +134,9 @@ filter went through `preprocess` on its own, the colour filters with
 All 80 lights registered, with about 1,950 stars matched per luminance
 frame at 0.38 px rms. The R, G and B masters sit within 0.01 px of the L
 master on average. A luminance run takes about four and a half minutes.
+Aligning the colour frames to the luminance reference leaves a black strip
+at the top of their masters where no colour frame covered the sky, which
+background extraction has to leave out of its samples.
 
 It found one bug: the cores of bright stars, saturated in every frame, came
 out black, because saturated pixels were rejected and nothing was left. A
