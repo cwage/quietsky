@@ -141,3 +141,15 @@ def debayered_lights() -> dict[str, npt.NDArray[np.float32]]:
     """Crops of the sample lights after PixInsight's VNG demosaicing, by raw frame name."""
     with np.load(DATA / "reference" / "debayered_light.npz") as arrays:
         return dict(arrays)
+
+
+def registration_matrices() -> dict[str, npt.NDArray[np.float64]]:
+    """The transformation PixInsight printed for each light, by raw frame name.
+
+    It maps reference-frame pixel coordinates to the light's, and is rounded
+    to six decimals, which loses the perspective terms in the last row.
+    """
+    matrices: dict[str, list[list[float]]] = json.loads(
+        (DATA / "reference" / "registration.json").read_text()
+    )
+    return {name: np.array(matrix) for name, matrix in matrices.items()}

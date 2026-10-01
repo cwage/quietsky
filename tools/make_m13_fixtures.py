@@ -127,6 +127,28 @@ def crop_light_stages() -> None:
     print(f"light stages: {len(SAMPLE_LIGHTS)} frames")
 
 
+def registration_matrices(log: str) -> dict[str, list[list[float]]]:
+    """The transformation PixInsight printed for each light, by raw frame name.
+
+    It maps reference-frame pixel coordinates to the light's. PixInsight
+    prints six decimals, which loses the perspective terms in the last row.
+    """
+    section = log.split("* Begin registration of light frames")[1]
+    section = section.split("* End registration of light frames")[0]
+    text = "\n".join(line.split("] ", 1)[-1] for line in section.splitlines())
+    row = r"\s+".join([r"([+-]?\d+\.\d+)"] * 3)
+    blocks = re.findall(
+        rf"Transformation matrix:\n\s*{row}\n\s*{row}\n\s*{row}"
+        r".*?Writing output file: \S*/(\S+)_c_cc_d_r\.xisf",
+        text,
+        re.DOTALL,
+    )
+    return {
+        block[9]: [[float(value) for value in block[i : i + 3]] for i in (0, 3, 6)]
+        for block in blocks
+    }
+
+
 def crop_masters() -> None:
     (OUTPUT / "reference").mkdir(parents=True, exist_ok=True)
     log = next((SESSION / "output" / "logs").glob("*.log")).read_text()
@@ -152,6 +174,9 @@ def crop_masters() -> None:
     scales = {kind: dark_scales(log, kind) for kind in ("flat", "light")}
     (OUTPUT / "reference" / "dark_scales.json").write_text(json.dumps(scales, indent=1))
     print(f"dark scales: {len(scales['flat'])} flats, {len(scales['light'])} lights")
+    matrices = registration_matrices(log)
+    (OUTPUT / "reference" / "registration.json").write_text(json.dumps(matrices, indent=1))
+    print(f"registration: {len(matrices)} matrices")
     noise = debayer_noise(log)
     (OUTPUT / "reference" / "debayer_noise.json").write_text(json.dumps(noise, indent=1))
     print(f"debayer noise: {len(noise)} frames")
