@@ -6,17 +6,22 @@ tests/test_reference_m13.py checks against a 2018 PixInsight run.
 """
 
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 from starkiller.estimators import ikss
+from starkiller.frame import DiskStack
 
 Float = npt.NDArray[np.float64]
 Bool = npt.NDArray[np.bool_]
 Index = npt.NDArray[np.int64]
+# Frames to integrate: an (N, H, W) array, or the same read from files.
+Stack = npt.NDArray[Any] | DiskStack
 
 # Constants of the Winsorization step: clip at 1.5 sigma, then correct the
 # standard deviation of the clipped sample back to that of a normal one.
@@ -24,6 +29,10 @@ WINSOR_CUTOFF = 1.5
 WINSOR_SIGMA_CORRECTION = 1.134
 WINSOR_TOLERANCE = 0.0005
 WINSOR_MAX_ITERATIONS = 10_000
+# How many values, frames times pixels, one thread works on at a time, and
+# how many are read from the stack in one go. Together they bound memory.
+CHUNK_VALUES = 2_000_000
+BAND_VALUES = 128_000_000
 
 
 @dataclass(frozen=True)
@@ -186,12 +195,12 @@ class Normalization:
     add: float
 
 
-def frame_estimates(
-    stack: npt.NDArray[np.floating], workers: int | None = None
-) -> tuple[Float, Float]:
+def frame_estimates(stack: Stack, workers: int | None = None) -> tuple[Float, Float]:
     """Location and scale of every frame of an (N, H, W) stack."""
     with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
-        estimates = np.array(list(pool.map(ikss, stack)))
+        # One frame per worker at a time, so a stack on disk is never
+        # loaded whole.
+        estimates = np.array(list(pool.map(lambda index: ikss(stack[index]), range(len(stack)))))
     return estimates[:, 0], estimates[:, 1]
 
 
@@ -224,13 +233,13 @@ def noise_weights(noise: Float, normalization: Normalization) -> Float:
 
 
 def integrate(
-    stack: npt.NDArray[np.floating] | npt.NDArray[np.integer],
+    stack: Stack,
     sigma_low: float = 4.0,
     sigma_high: float = 3.0,
     normalization: Normalization | None = None,
     weights: Float | None = None,
     valid_range: tuple[float, float] | None = None,
-    chunk_rows: int = 16,
+    chunk_rows: int | None = None,
     workers: int | None = None,
 ) -> Integration:
     """Average an (N, H, W) stack of frames, ignoring rejected pixels.
@@ -243,9 +252,11 @@ def integrate(
     except that a pixel saturated in every frame that covers it stays
     saturated.
 
-    The stack is processed chunk_rows rows at a time, on workers threads
-    (one per CPU by default), to bound memory; it may be a memory-mapped
-    array.
+    The stack may be a DiskStack. It is read in bands of rows, and each
+    band is processed a few rows at a time on workers threads (one per CPU
+    by default). Both sizes shrink as the number of frames grows, so memory
+    use stays about the same however many frames there are. chunk_rows
+    overrides the number of rows processed at a time.
     """
     frames, height, width = stack.shape
     image = np.empty((height, width), np.float32)
@@ -255,9 +266,14 @@ def integrate(
     frame_high = np.zeros(frames, np.int64)
     frame_weights = np.ones(frames) if weights is None else weights
 
-    def integrate_rows(top: int) -> tuple[Index, Index]:
-        rows = slice(top, min(top + chunk_rows, height))
-        chunk = np.asarray(stack[:, rows, :], dtype=np.float64).reshape(frames, -1)
+    values_per_row = frames * width
+    step = chunk_rows or max(CHUNK_VALUES // values_per_row, 1)
+    band_rows = max(BAND_VALUES // values_per_row, step)
+
+    def integrate_rows(band: npt.NDArray[Any], band_top: int, top: int) -> tuple[Index, Index]:
+        rows = slice(top, min(top + step, band_top + len(band[0])))
+        within = slice(rows.start - band_top, rows.stop - band_top)
+        chunk = np.asarray(band[:, within, :], dtype=np.float64).reshape(frames, -1)
         too_low = too_high = None
         if valid_range is not None:
             too_low, too_high = chunk <= valid_range[0], chunk >= valid_range[1]
@@ -281,9 +297,16 @@ def integrate(
         return low.sum(axis=1), high.sum(axis=1)
 
     with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
-        for low_counts, high_counts in pool.map(integrate_rows, range(0, height, chunk_rows)):
-            frame_low += low_counts
-            frame_high += high_counts
+        for band_top in range(0, height, band_rows):
+            band_bottom = min(band_top + band_rows, height)
+            # One read per frame for the whole band; for files on a spinning
+            # disk the reads, not the arithmetic, set the pace.
+            band = stack[:, band_top:band_bottom, :]
+            tops = range(band_top, band_bottom, step)
+            jobs = pool.map(integrate_rows, [band] * len(tops), [band_top] * len(tops), tops)
+            for low_counts, high_counts in jobs:
+                frame_low += low_counts
+                frame_high += high_counts
 
     return Integration(image, rejection_low, rejection_high, frame_low, frame_high)
 
@@ -294,21 +317,21 @@ LIGHT_RANGE = (0.0, 0.98)
 
 
 def integrate_lights(
-    stack: npt.NDArray[np.floating],
+    channels: Sequence[Stack],
     noise: Float,
     sigma_low: float = 4.0,
     sigma_high: float = 3.0,
 ) -> list[Integration]:
     """Integrate registered lights, one result per colour channel.
 
-    stack is (N, H, W, C) and noise the (N, C) noise of each frame's
-    channels, ideally measured before registration, which smooths it. Each
-    channel is normalised in level and scale to the first frame, weighted by
-    noise and cleared of black and saturated pixels.
+    channels holds an (N, H, W) stack per colour channel and noise the
+    (N, C) noise of each frame's channels, ideally measured before
+    registration, which smooths it. Each channel is normalised in level and
+    scale to the first frame, weighted by noise and cleared of black and
+    saturated pixels.
     """
     results = []
-    for channel in range(stack.shape[-1]):
-        frames = stack[..., channel]
+    for channel, frames in enumerate(channels):
         normalization = level_and_scale_normalization(*frame_estimates(frames))
         weights = noise_weights(noise[:, channel], normalization)
         results.append(
