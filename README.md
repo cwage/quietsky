@@ -15,7 +15,8 @@ line: the PixInsight workflow without the GUI.
 | Auto-stretched previews | done |
 | Cosmetic correction | partly: PixInsight's replacement value is matched; hot pixels are found from the master dark, not by PixInsight's automatic rule |
 | Debayer (VNG) | done, identical to PixInsight at all but about 30 pixels of a frame |
-| Registration, light integration | not started |
+| Star detection | done; our own detector, positions good to a tenth of a pixel on synthetic fields |
+| Star matching, resampling, light integration | not started |
 
 The remaining steps are tracked as issues in the repository.
 
