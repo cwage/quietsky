@@ -13,6 +13,8 @@ from starkiller.xisf import read_xisf
 
 HeaderValue = str | int | float | bool
 
+# FITS keywords that describe how the pixels are stored, not the image.
+STRUCTURAL_KEYWORDS = {"SIMPLE", "BITPIX", "NAXIS", "EXTEND", "BSCALE", "BZERO", "ROWORDER"}
 RAW_SUFFIXES = {".arw", ".cr2", ".cr3", ".dng", ".nef", ".orf", ".raf", ".rw2"}
 FITS_SUFFIXES = {".fit", ".fits", ".fts"}
 
@@ -57,7 +59,9 @@ def load_fits(path: Path) -> Frame:
         header = {
             key: value
             for key, value in hdu.header.items()
-            if key and key not in ("COMMENT", "HISTORY")
+            if key
+            and key not in ("COMMENT", "HISTORY")
+            and key.rstrip("0123456789") not in STRUCTURAL_KEYWORDS
         }
     if data.ndim == 3:
         data = np.moveaxis(data, 0, -1)
@@ -67,9 +71,7 @@ def load_fits(path: Path) -> Frame:
 def save_fits(path: Path, frame: Frame) -> None:
     data = np.moveaxis(frame.data, -1, 0) if frame.data.ndim == 3 else frame.data
     hdu = fits.PrimaryHDU(data)
-    for key, value in frame.header.items():
-        if key not in hdu.header:
-            hdu.header[key] = value
+    hdu.header.update(frame.header)
     # FITS puts the origin at the bottom left; we keep row 0 at the top.
     hdu.header["ROWORDER"] = "TOP-DOWN"
     hdu.writeto(path, overwrite=True)

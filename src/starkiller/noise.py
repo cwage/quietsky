@@ -73,5 +73,10 @@ def evaluate_noise(image: npt.NDArray[np.floating]) -> Noise:
         noise = noise_mrs(image, layer_count)
         if noise.fraction >= MIN_NOISE_FRACTION:
             return noise
+    return Noise(k_sigma_noise(image), 1.0)
+
+
+def k_sigma_noise(image: npt.NDArray[np.floating]) -> float:
+    """Quick noise estimate: the clipped spread of the finest wavelet layer."""
     layers, _ = b3_layers(image, 1)
-    return Noise(_k_sigma(layers[0]) / B3_NOISE_PER_LAYER[0], 1.0)
+    return _k_sigma(layers[0]) / B3_NOISE_PER_LAYER[0]
