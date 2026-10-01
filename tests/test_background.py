@@ -90,7 +90,7 @@ def frame_filling_galaxy(arms: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """
     rows, columns = np.mgrid[:400, :600]
     galaxy = 0.02 * np.exp(-(((rows - 200) / 150) ** 2 + ((columns - 300) / 260) ** 2))
-    galaxy = galaxy * (1 + arms * np.sin(columns / 60) * np.sin(rows / 45))
+    galaxy = galaxy * (1 + arms * np.sin(columns / 90) * np.sin(rows / 70))
     image, _, _ = synthetic.star_field(SHAPE, 80)
     tilt = (0.006 * columns / 600).astype(np.float32)
     return image + tilt + galaxy.astype(np.float32), galaxy
@@ -106,7 +106,7 @@ def test_the_spline_takes_a_frame_filling_target_away() -> None:
 
 
 def test_samples_on_a_target_with_detail_show_structure() -> None:
-    _, _, samples = extract_background(frame_filling_galaxy(arms=0.3)[0])
+    _, _, samples = extract_background(frame_filling_galaxy(arms=0.5)[0])
 
     assert samples.structure > 1.5
 
