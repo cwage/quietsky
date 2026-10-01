@@ -31,22 +31,28 @@ FIT_POINTS = 13
 
 def calibrate(
     frame: Float32,
-    bias: Float32,
-    dark: Float32,
-    dark_scale: float,
+    bias: Float32 | None = None,
+    dark: Float32 | None = None,
+    dark_scale: float = 1.0,
     flat: Float32 | None = None,
 ) -> Float32:
-    """Subtract the master bias and dark_scale times the master dark.
+    """Subtract the master bias and dark_scale times the master dark, and divide by the flat.
 
-    The master dark still contains the bias, as a stack of raw dark frames
-    does, so the bias is taken out of it before scaling.
+    Each master is optional. The master dark still contains the bias, as a
+    stack of raw dark frames does. With a bias, the bias is taken out of the
+    dark before scaling. Without one the dark is subtracted whole, bias and
+    all, which is only right for a dark_scale of one.
 
-    If a flat is given the result is divided by it, which evens out
-    vignetting and dust shadows. It must have a mean of one over the whole
-    frame (see unit_flat), so that the division leaves the overall level of
-    the frame alone.
+    The flat evens out vignetting and dust shadows. It must have a mean of
+    one over the whole frame (see unit_flat), so that the division leaves
+    the overall level of the frame alone.
     """
-    result: Float32 = (frame - bias) - np.float32(dark_scale) * (dark - bias)
+    result: Float32 = frame
+    if bias is not None:
+        result = result - bias
+    if dark is not None:
+        thermal = dark if bias is None else dark - bias
+        result = result - np.float32(dark_scale) * thermal
     if flat is not None:
         result = result / flat
     return result

@@ -35,6 +35,26 @@ def test_calibrate_subtracts_bias_and_scaled_dark() -> None:
     np.testing.assert_allclose(result, [[0.008, 0.006], [0.008, 0.008]], rtol=1e-6)
 
 
+def test_calibrate_without_a_bias_subtracts_the_whole_dark() -> None:
+    dark = np.array([[0.002, 0.003]], np.float32)  # bias and thermal signal together
+    frame = np.array([[0.012, 0.013]], np.float32)
+
+    np.testing.assert_allclose(calibrate(frame, dark=dark), [[0.01, 0.01]], rtol=1e-6)
+
+
+def test_calibrate_without_a_dark_subtracts_only_the_bias() -> None:
+    bias = np.full((1, 2), 0.002, np.float32)
+    frame = np.array([[0.012, 0.013]], np.float32)
+
+    np.testing.assert_allclose(calibrate(frame, bias), [[0.01, 0.011]], rtol=1e-6)
+
+
+def test_calibrate_with_no_masters_returns_the_frame() -> None:
+    frame = np.array([[0.012, 0.013]], np.float32)
+
+    np.testing.assert_array_equal(calibrate(frame), frame)
+
+
 def test_calibrate_with_a_flat_evens_out_vignetting() -> None:
     rows, columns = np.mgrid[:64, :64]
     vignette = (1 - ((rows - 32) ** 2 + (columns - 32) ** 2) / 4000).astype(np.float32)

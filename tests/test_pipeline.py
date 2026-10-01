@@ -80,3 +80,39 @@ def test_master_light_from_raw_crops_resembles_pixinsights(tmp_path: Path) -> No
         a, b = ours[..., channel].astype(np.float64), theirs[..., channel].astype(np.float64)
         assert np.corrcoef(a.ravel(), b.ravel())[0, 1] > 0.999
         assert np.median(a / b) == pytest.approx(expected_ratio, rel=0.02)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("kinds", "said"),
+    [
+        (("dark", "flat"), ["dark scaled by 1.000", "lights calibrated with: dark, flat"]),
+        (("bias", "flat"), ["bias subtracted", "lights calibrated with: bias, flat"]),
+        (("bias", "dark"), ["lights calibrated with: bias, dark"]),
+        ((), ["lights calibrated with: nothing"]),
+    ],
+)
+def test_preprocess_works_without_some_calibration_frames(
+    tmp_path: Path, kinds: tuple[str, ...], said: list[str]
+) -> None:
+    session = Session(
+        frames("bias") if "bias" in kinds else [],
+        frames("dark") if "dark" in kinds else [],
+        frames("flat") if "flat" in kinds else [],
+        frames("light")[:4],
+    )
+    reports: list[str] = []
+
+    master = preprocess(session, tmp_path, report=reports.append)
+
+    assert load(master).data.shape == (256, 256, 3)
+    for kind in ("bias", "dark", "flat"):
+        assert (tmp_path / "master" / f"{kind}.fits").exists() == (kind in kinds)
+    for phrase in said:
+        assert any(phrase in line for line in reports)
+    assert reports[-1].startswith("master light from 4 frames")
+    # Without a bias the dark cannot be scaled.
+    if "bias" not in kinds:
+        per_light = [line for line in reports if "dark scale " in line]
+        assert len(per_light) == 4
+        assert all("dark scale 1.000" in line for line in per_light)
