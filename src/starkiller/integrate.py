@@ -239,7 +239,9 @@ def integrate(
     first normalised (see flux_normalization, level_and_scale_normalization)
     so that frames can be compared, and lights are weighted by their noise.
     With valid_range, pixels at or outside its limits, such as the black
-    borders of registered frames and saturated stars, are rejected outright.
+    borders of registered frames and saturated stars, are rejected outright,
+    except that a pixel saturated in every frame that covers it stays
+    saturated.
 
     The stack is processed chunk_rows rows at a time, on workers threads
     (one per CPU by default), to bound memory; it may be a memory-mapped
@@ -259,6 +261,10 @@ def integrate(
         too_low = too_high = None
         if valid_range is not None:
             too_low, too_high = chunk <= valid_range[0], chunk >= valid_range[1]
+            # Where every frame that covers a pixel is saturated, as in the
+            # core of a bright star, saturated is the right answer; rejecting
+            # them all would leave a black hole.
+            too_high &= (~too_low & ~too_high).any(axis=0)
         if normalization is not None:
             chunk = (chunk - normalization.subtract[:, None]) * normalization.multiply[:, None]
             # Rounded to 32 bits, as PixInsight holds the normalised samples.

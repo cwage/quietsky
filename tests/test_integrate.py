@@ -158,6 +158,20 @@ def test_valid_range_keeps_black_borders_out_of_the_average() -> None:
     assert result.frame_rejected_low[4] >= 12
 
 
+def test_a_pixel_saturated_in_every_frame_stays_saturated() -> None:
+    stack = noise(12, 6 * 8).reshape(12, 6, 8)
+    stack[:, 3, 4] = 1.0  # the core of a bright star
+    stack[5, 2, 2] = 1.0  # a pixel saturated in one frame only
+    stack[7, 3, 4] = 0.0  # one frame does not cover the star
+
+    result = integrate(stack, 10, 10, valid_range=(0.0, 0.98))
+
+    assert result.image[3, 4] == 1.0
+    assert result.rejection_high[3, 4] == 0
+    assert result.image[2, 2] < 0.2
+    assert result.rejection_high[2, 2] == np.float32(1 / 12)
+
+
 def test_level_and_scale_normalization_matches_frames_to_the_first() -> None:
     rng = np.random.default_rng(4)
     sky = rng.normal(0, 1, (8, 20, 30))
