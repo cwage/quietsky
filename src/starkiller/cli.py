@@ -58,8 +58,8 @@ def _stack(args: argparse.Namespace) -> None:
 
 
 def _calibrate(args: argparse.Namespace) -> None:
-    bias = normalized(load(args.bias).data)
-    dark = normalized(load(args.dark).data)
+    bias = normalized(load(args.bias).data) if args.bias else None
+    dark = normalized(load(args.dark).data) if args.dark else None
     flat = unit_flat(normalized(load(args.flat).data)) if args.flat else None
     args.output.mkdir(parents=True, exist_ok=True)
     for path in args.files:
@@ -67,7 +67,10 @@ def _calibrate(args: argparse.Namespace) -> None:
         data = normalized(frame.data)
         scale = args.dark_scale
         if scale is None:
-            scale = optimize_dark(data, bias, dark, mosaic="BAYERPAT" in frame.header)
+            # Without a bias the dark cannot be scaled and is subtracted whole.
+            scale = 1.0
+            if bias is not None and dark is not None:
+                scale = optimize_dark(data, bias, dark, mosaic="BAYERPAT" in frame.header)
         calibrated = calibrate(data, bias, dark, scale, flat)
         output = args.output / f"{path.stem}_c.fits"
         save_fits(output, Frame(calibrated, frame.header | {"DARKSCAL": round(scale, 4)}))
@@ -124,7 +127,9 @@ def _background(args: argparse.Namespace) -> None:
         print(f"wrote {args.model}")
 
 
-def _frames_in(directory: Path) -> list[Path]:
+def _frames_in(directory: Path | None) -> list[Path]:
+    if directory is None:
+        return []
     suffixes = RAW_SUFFIXES | FITS_SUFFIXES | {".xisf"}
     return sorted(path for path in directory.iterdir() if path.suffix.lower() in suffixes)
 
@@ -133,6 +138,8 @@ def _preprocess(args: argparse.Namespace) -> None:
     session = Session(
         _frames_in(args.bias), _frames_in(args.dark), _frames_in(args.flat), _frames_in(args.light)
     )
+    if not session.light:
+        raise SystemExit(f"no light frames in {args.light}")
     preprocess(session, args.output)
 
 
@@ -173,11 +180,12 @@ def main(argv: list[str] | None = None) -> None:
 
     calibration = commands.add_parser(
         "calibrate",
-        help="subtract a master bias and a scaled master dark from frames, and divide by a flat",
+        help="subtract a master bias and a scaled master dark from frames, and divide by a "
+        "flat; each master is optional",
     )
     calibration.add_argument("files", nargs="+", type=Path)
-    calibration.add_argument("--bias", type=Path, required=True, help="master bias")
-    calibration.add_argument("--dark", type=Path, required=True, help="master dark")
+    calibration.add_argument("--bias", type=Path, help="master bias")
+    calibration.add_argument("--dark", type=Path, help="master dark")
     calibration.add_argument("--flat", type=Path, help="master flat to divide by (for lights)")
     calibration.add_argument(
         "--dark-scale",
@@ -214,10 +222,9 @@ def main(argv: list[str] | None = None) -> None:
         help="run the whole pipeline on a session: masters, calibration, debayer, "
         "registration and integration",
     )
-    for name in ("bias", "dark", "flat", "light"):
-        whole.add_argument(
-            f"--{name}", type=Path, required=True, help=f"directory of {name} frames"
-        )
+    for name in ("bias", "dark", "flat"):
+        whole.add_argument(f"--{name}", type=Path, help=f"directory of {name} frames, if any")
+    whole.add_argument("--light", type=Path, required=True, help="directory of light frames")
     whole.add_argument(
         "-o", "--output", type=Path, required=True, help="directory for masters and aligned lights"
     )

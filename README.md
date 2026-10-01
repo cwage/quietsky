@@ -34,7 +34,9 @@ Everything runs in Docker. A whole session in one go:
 That writes the four master frames and a stretched preview of the master
 light to `out/session/master`, and the aligned lights to
 `out/session/registered`. Lights are aligned to the first one. Hot pixels
-are not corrected.
+are not corrected. `--bias`, `--dark` and `--flat` may each be left out; the
+corrections that cannot be made are skipped, and without bias frames the
+dark is subtracted unscaled.
 
 For the M13 session in the archive, at the camera's full 14-bit depth (about
 20 minutes for its 103 frames):

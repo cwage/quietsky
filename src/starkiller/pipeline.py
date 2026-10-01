@@ -79,8 +79,16 @@ def frame_noise(
 
 def _exposure(frames: Sequence[Frame]) -> float | None:
     """Exposure time shared by some frames, if their headers give one."""
-    exposure = frames[0].header.get("EXPTIME")
+    header = frames[0].header
+    exposure = header.get("EXPTIME", header.get("EXPOSURE"))
     return float(exposure) if isinstance(exposure, int | float) else None
+
+
+def _master(frames: Sequence[Frame], path: Path) -> Float32:
+    """Integrate frames as they are into a master and save it."""
+    image = integrate(np.stack([frame.data for frame in frames])).image
+    save_fits(path, Frame(image, {"NCOMBINE": len(frames)}))
+    return image
 
 
 def preprocess(
@@ -95,31 +103,59 @@ def preprocess(
     master/light.png, and the aligned lights in registered/. Lights are
     aligned to the first one; a light whose stars cannot be matched to it is
     left out. Hot pixels are not corrected.
+
+    A session may lack bias, dark or flat frames; the corrections that
+    cannot be made are skipped. Without bias frames the dark is subtracted
+    unscaled, from the flats too.
     """
     master = output / "master"
     registered = output / "registered"
     master.mkdir(parents=True, exist_ok=True)
     registered.mkdir(exist_ok=True)
 
-    bias = integrate(np.stack([load_frame(path).data for path in session.bias])).image
-    save_fits(master / "bias.fits", Frame(bias, {"NCOMBINE": len(session.bias)}))
-    report(f"master bias from {len(session.bias)} frames")
-
+    bias = dark = flat_unit = None
+    if session.bias:
+        bias = _master([load_frame(path) for path in session.bias], master / "bias.fits")
+        report(f"master bias from {len(session.bias)} frames")
     darks = [load_frame(path) for path in session.dark]
-    dark = integrate(np.stack([frame.data for frame in darks])).image
-    save_fits(master / "dark.fits", Frame(dark, {"NCOMBINE": len(darks)}))
-    report(f"master dark from {len(darks)} frames")
+    if darks:
+        dark = _master(darks, master / "dark.fits")
+        report(f"master dark from {len(darks)} frames")
+    # The dark can only be scaled once the bias is out of it.
+    scalable = bias is not None and dark is not None
 
-    # A flat's exposure is too short for the dark scale to be found from its
-    # noise, so the dark is scaled by exposure time, or left out without one.
-    flats = [load_frame(path) for path in session.flat]
-    flat_exposure, dark_exposure = _exposure(flats), _exposure(darks)
-    flat_dark_scale = flat_exposure / dark_exposure if flat_exposure and dark_exposure else 0.0
-    calibrated = np.stack([calibrate(frame.data, bias, dark, flat_dark_scale) for frame in flats])
-    flat = integrate(calibrated, normalization=flux_normalization(frame_estimates(calibrated)[0]))
-    save_fits(master / "flat.fits", Frame(flat.image, {"NCOMBINE": len(flats)}))
-    report(f"master flat from {len(flats)} frames, dark scaled by {flat_dark_scale:.3f}")
-    flat_unit = unit_flat(flat.image)
+    if session.flat:
+        flats = [load_frame(path) for path in session.flat]
+        # A flat's exposure is too short for the dark scale to be found from
+        # its noise. With a bias the dark is scaled by exposure time, or left
+        # out if the times are unknown; without one the whole dark is
+        # subtracted, standing in for the bias.
+        flat_dark_scale = 1.0
+        if scalable:
+            flat_exposure, dark_exposure = _exposure(flats), _exposure(darks)
+            flat_dark_scale = 0.0
+            if flat_exposure is not None and dark_exposure:
+                flat_dark_scale = flat_exposure / dark_exposure
+        calibrated = np.stack(
+            [calibrate(frame.data, bias, dark, flat_dark_scale) for frame in flats]
+        )
+        flat = integrate(
+            calibrated, normalization=flux_normalization(frame_estimates(calibrated)[0])
+        )
+        save_fits(master / "flat.fits", Frame(flat.image, {"NCOMBINE": len(flats)}))
+        flat_unit = unit_flat(flat.image)
+        if dark is None and bias is None:
+            report(f"master flat from {len(flats)} frames, not corrected for bias")
+        elif dark is None:
+            report(f"master flat from {len(flats)} frames, bias subtracted")
+        else:
+            report(f"master flat from {len(flats)} frames, dark scaled by {flat_dark_scale:.3f}")
+    corrections = [
+        name
+        for name, present in (("bias", bias), ("dark", dark), ("flat", flat_unit))
+        if present is not None
+    ]
+    report("lights calibrated with: " + (", ".join(corrections) or "nothing"))
 
     aligned: list[Float32] = []
     frames: list[Frame] = []
@@ -127,7 +163,9 @@ def preprocess(
     for path in session.light:
         frame = load_frame(path)
         pattern = frame.header.get("BAYERPAT")
-        dark_scale = optimize_dark(frame.data, bias, dark, mosaic=isinstance(pattern, str))
+        dark_scale = 1.0
+        if bias is not None and dark is not None:
+            dark_scale = optimize_dark(frame.data, bias, dark, mosaic=isinstance(pattern, str))
         image = calibrate(frame.data, bias, dark, dark_scale, flat_unit)
         header = {key: value for key, value in frame.header.items() if key != "BAYERPAT"}
         header["DARKSCAL"] = round(dark_scale, 4)
