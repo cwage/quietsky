@@ -82,6 +82,75 @@ def test_an_extended_object_is_not_mistaken_for_background() -> None:
     assert peak == pytest.approx(0.01, rel=0.1)
 
 
+def frame_filling_galaxy(arms: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """A broad galaxy across the whole frame over a tilted sky; returns image and galaxy.
+
+    arms is the depth of a broad ripple across the galaxy, standing in for
+    spiral arms and dust lanes several samples wide.
+    """
+    rows, columns = np.mgrid[:400, :600]
+    galaxy = 0.02 * np.exp(-(((rows - 200) / 150) ** 2 + ((columns - 300) / 260) ** 2))
+    galaxy = galaxy * (1 + arms * np.sin(columns / 60) * np.sin(rows / 45))
+    image, _, _ = synthetic.star_field(SHAPE, 80)
+    tilt = (0.006 * columns / 600).astype(np.float32)
+    return image + tilt + galaxy.astype(np.float32), galaxy
+
+
+def test_the_spline_takes_a_frame_filling_target_away() -> None:
+    image, galaxy = frame_filling_galaxy()
+
+    corrected, _, _ = extract_background(image)
+
+    left = corrected[150:250, 250:350].mean() - corrected[:40, :40].mean()
+    assert left < 0.1 * (galaxy[150:250, 250:350].mean() - galaxy[:40, :40].mean())
+
+
+def test_samples_on_a_target_with_detail_show_structure() -> None:
+    _, _, samples = extract_background(frame_filling_galaxy(arms=0.3)[0])
+
+    assert samples.structure > 1.5
+
+
+def test_a_perfectly_smooth_target_cannot_be_told_from_a_gradient() -> None:
+    # The limit of the warning: nothing in the samples distinguishes a
+    # featureless frame-filling glow from sky brightness.
+    _, _, samples = extract_background(frame_filling_galaxy()[0])
+
+    assert samples.structure < 1.5
+
+
+def test_a_plane_removes_the_tilt_and_leaves_the_target() -> None:
+    image, galaxy = frame_filling_galaxy()
+
+    corrected, _, _ = extract_background(image, model="plane")
+
+    contrast = corrected[150:250, 250:350].mean() - corrected[:40, :40].mean()
+    expected = galaxy[150:250, 250:350].mean() - galaxy[:40, :40].mean()
+    assert contrast == pytest.approx(expected, rel=0.1)
+    # The tilt across the frame is gone: left and right edges agree.
+    edges = corrected[180:220, :30].mean() - corrected[180:220, -30:].mean()
+    assert abs(edges) < 0.001
+
+
+def test_sky_with_a_gradient_shows_no_structure() -> None:
+    _, _, samples = extract_background(field_with_gradient())
+
+    assert samples.structure < 1.5
+
+
+def test_a_quadratic_removes_a_curved_gradient() -> None:
+    image = field_with_gradient()
+
+    corrected, _, _ = extract_background(image, model="quadratic")
+
+    assert unevenness(corrected) < 2 * synthetic.NOISE / 10
+
+
+def test_unknown_models_are_refused() -> None:
+    with pytest.raises(ValueError, match="unknown background model"):
+        extract_background(field_with_gradient(), model="cubic")
+
+
 def test_mono_and_colour_images_keep_their_shape() -> None:
     image = field_with_gradient()
     colour = np.stack([image, 0.8 * image, 0.6 * image], axis=-1)

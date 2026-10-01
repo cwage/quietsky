@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from starkiller.background import extract_background
+from starkiller.background import MODELS, STRUCTURE_WARNING, extract_background
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import BAYER_PATTERNS, debayer_vng
 from starkiller.frame import FITS_SUFFIXES, RAW_SUFFIXES, Frame, load, normalized, save_fits
@@ -116,15 +116,21 @@ def _register(args: argparse.Namespace) -> None:
 def _background(args: argparse.Namespace) -> None:
     frame = load(args.file)
     corrected, model, samples = extract_background(
-        normalized(frame.data), args.samples_per_row, smoothing=args.smoothing
+        normalized(frame.data), args.samples_per_row, smoothing=args.smoothing, model=args.model
     )
     save_fits(args.output, Frame(corrected, frame.header))
-    print(f"{len(samples.x)} samples, {int(samples.kept.sum())} kept")
+    print(f"{args.model} model from {int(samples.kept.sum())} of {len(samples.x)} samples")
     print(f"background varied by {float(np.ptp(model)):.3g} across the frame")
+    if args.model == "spline" and samples.structure > STRUCTURE_WARNING:
+        print(
+            f"warning: the samples vary {samples.structure:.1f} times more than sky would. "
+            "If the target fills the frame the spline will have removed some of it; "
+            "try --model plane"
+        )
     print(f"wrote {args.output}")
-    if args.model:
-        save_fits(args.model, Frame(model))
-        print(f"wrote {args.model}")
+    if args.write_model:
+        save_fits(args.write_model, Frame(model))
+        print(f"wrote {args.write_model}")
 
 
 def _frames_in(directory: Path | None) -> list[Path]:
@@ -240,7 +246,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     background.add_argument("file", type=Path)
     background.add_argument("-o", "--output", type=Path, required=True, help="FITS file to write")
-    background.add_argument("--model", type=Path, help="also write the background model here")
+    background.add_argument(
+        "--model",
+        choices=MODELS,
+        default="spline",
+        help="shape of the background: a spline follows the samples closely, a quadratic or "
+        "a plane only a gradient (for targets that fill the frame)",
+    )
+    background.add_argument(
+        "--write-model", type=Path, help="also write the background model to this FITS file"
+    )
     background.add_argument(
         "--samples-per-row", type=int, default=16, help="background samples across the frame"
     )

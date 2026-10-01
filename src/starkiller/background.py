@@ -42,6 +42,11 @@ class Samples:
     y: Float64
     values: Float64  # (N, C)
     kept: Bool
+    # How much more the kept samples vary, after a quadratic fit, than the
+    # scatter between neighbouring samples accounts for. About one for sky
+    # with a gradient; well above one when the samples are following
+    # something with structure, such as a galaxy that fills the frame.
+    structure: float
 
 
 def _quadratic_terms(x: Float64, y: Float64) -> Float64:
@@ -91,7 +96,17 @@ def sample_background(
         dtype=np.float64,
     ).reshape(len(x), -1)
     fx, fy = x / width, y / height
-    return Samples(x.astype(np.float64), y.astype(np.float64), values, ~_objects(fx, fy, values))
+    kept = ~_objects(fx, fy, values)
+    terms = _quadratic_terms(fx, fy)
+    structure = 0.0
+    for channel in range(values.shape[1]):
+        coefficients = np.linalg.lstsq(terms[kept], values[kept, channel], rcond=None)[0]
+        residual = values[kept, channel] - terms[kept] @ coefficients
+        grid = values[:, channel].reshape(len(rows), len(columns))
+        scatter = MAD_TO_SIGMA * float(np.median(np.abs(np.diff(grid, axis=1)))) / np.sqrt(2)
+        if scatter > 0:
+            structure = max(structure, float(np.sqrt((residual**2).mean())) / scatter)
+    return Samples(x.astype(np.float64), y.astype(np.float64), values, kept, structure)
 
 
 def _kernel(x: Float64, y: Float64, to_x: Float64, to_y: Float64) -> Float64:
@@ -145,35 +160,73 @@ def fit_surface(
     return result
 
 
+def fit_polynomial(
+    x: Float64, y: Float64, values: Float64, shape: tuple[int, int], degree: int
+) -> Float32:
+    """A plane (degree 1) or quadratic (degree 2) through sample values, as an image.
+
+    Far stiffer than the spline: it can follow a gradient but not the shape
+    of a nebula or galaxy.
+    """
+    height, width = shape
+
+    def terms(u: Float64, v: Float64) -> list[Float64]:
+        linear = [np.ones_like(u * v), u + 0 * v, v + 0 * u]
+        return linear if degree == 1 else [*linear, u * u + 0 * v, u * v, v * v + 0 * u]
+
+    design = np.stack(terms(x / width, y / height), axis=1)
+    coefficients = np.linalg.lstsq(design, values, rcond=None)[0]
+    u = (np.arange(width) / width)[None, :]
+    v = (np.arange(height) / height)[:, None]
+    surface = sum(c * term for c, term in zip(coefficients, terms(u, v), strict=True))
+    result: Float32 = np.asarray(surface, dtype=np.float32)
+    return result
+
+
+MODELS = ("spline", "quadratic", "plane")
+# Above this, the samples have more structure than sky with a gradient would.
+STRUCTURE_WARNING = 1.5
+
+
 def extract_background(
     image: npt.NDArray[np.floating],
     samples_per_row: int = 16,
     radius: int = 8,
     smoothing: float = 0.25,
+    model: str = "spline",
 ) -> tuple[Float32, Float32, Samples]:
     """Subtract the sky background from a linear (H, W) or (H, W, C) image.
 
     Returns the corrected image, the background model and the samples the
     model was built from. The model's median is added back, so the image
     keeps its overall level and only the unevenness goes.
+
+    The spline follows the samples closely, which is right when most of the
+    frame is sky. Where the target fills the frame there is no sky to
+    sample and the spline takes the target away with the gradient, as a
+    "quadratic" also can; a "plane" is too stiff to. samples.structure above
+    STRUCTURE_WARNING suggests this is happening, though a target without
+    detail cannot be told from a gradient and raises no warning.
     """
+    if model not in MODELS:
+        raise ValueError(f"unknown background model: {model!r}")
     channels = image[..., None] if image.ndim == 2 else image
     samples = sample_background(channels, samples_per_row, radius)
     kept = samples.kept
-    model = np.stack(
-        [
-            fit_surface(
-                samples.x[kept],
-                samples.y[kept],
-                samples.values[kept, channel],
-                channels.shape[:2],
-                smoothing,
-            )
-            for channel in range(channels.shape[-1])
-        ],
+    shape = channels.shape[:2]
+
+    def surface(values: Float64) -> Float32:
+        if model == "spline":
+            return fit_surface(samples.x[kept], samples.y[kept], values, shape, smoothing)
+        degree = 1 if model == "plane" else 2
+        return fit_polynomial(samples.x[kept], samples.y[kept], values, shape, degree)
+
+    background = np.stack(
+        [surface(samples.values[kept, channel]) for channel in range(channels.shape[-1])],
         axis=-1,
     )
-    corrected: Float32 = (channels - model + np.median(model, axis=(0, 1))).astype(np.float32)
+    level = np.median(background, axis=(0, 1))
+    corrected: Float32 = (channels - background + level).astype(np.float32)
     if image.ndim == 2:
-        return corrected[..., 0], model[..., 0], samples
-    return corrected, model, samples
+        return corrected[..., 0], background[..., 0], samples
+    return corrected, background, samples
