@@ -123,7 +123,11 @@ def _winsorized_sigma(values: Float, mask: Bool, lo: Index, n: Index) -> tuple[F
 
 
 def winsorized_sigma_clip(
-    stack: Float, sigma_low: float = 4.0, sigma_high: float = 3.0
+    stack: Float,
+    sigma_low: float = 4.0,
+    sigma_high: float = 3.0,
+    excluded_low: Bool | None = None,
+    excluded_high: Bool | None = None,
 ) -> tuple[Bool, Bool]:
     """Find outliers down each column of an (N, P) stack.
 
@@ -131,21 +135,30 @@ def winsorized_sigma_clip(
     for being too low and too high. A value is rejected when it lies at least
     sigma_low (or sigma_high) robust standard deviations from the median of
     the values not yet rejected; this repeats until nothing more is rejected.
+
+    Values marked in excluded_low and excluded_high take no part and come
+    back as rejected on their side.
     """
     frames, cols = stack.shape
+    lo = np.zeros(cols, np.int64)
+    hi = np.full(cols, frames, np.int64)
+    if excluded_low is not None:
+        stack = np.where(excluded_low, -np.inf, stack)
+        lo = excluded_low.sum(axis=0)
+    if excluded_high is not None:
+        stack = np.where(excluded_high, np.inf, stack)
+        hi = frames - excluded_high.sum(axis=0)
     order = np.argsort(stack, axis=0, kind="stable")
     values = np.take_along_axis(stack, order, axis=0)
     row = np.arange(frames)[:, None]
 
     # Outliers come off the two ends of each sorted column, so the survivors
-    # are always the rows lo <= row < hi.
-    lo = np.zeros(cols, np.int64)
-    hi = np.full(cols, frames, np.int64)
-    active = np.arange(cols)
+    # are always the rows lo <= row < hi. Fewer than three cannot be judged.
+    active = np.flatnonzero(hi - lo >= 3)
     while active.size:
         v, a_lo, a_hi = values[:, active], lo[active], hi[active]
         mask = (row >= a_lo) & (row < a_hi)
-        median, sigma, valid = _winsorized_sigma(v, mask, a_lo, a_hi - a_lo)
+        median, sigma, valid = _winsorized_sigma(np.where(mask, v, 0.0), mask, a_lo, a_hi - a_lo)
         usable = mask & valid
         low = usable & (v < median) & (median - v >= sigma_low * sigma)
         high = usable & (v > median) & (v - median >= sigma_high * sigma)
@@ -161,33 +174,76 @@ def winsorized_sigma_clip(
     return rejected_low, rejected_high
 
 
-def flux_gains(stack: npt.NDArray[np.floating], workers: int | None = None) -> Float:
-    """Factors that bring every frame of a stack to the level of the first.
+@dataclass(frozen=True)
+class Normalization:
+    """How each frame of a stack is brought into line with the first.
+
+    A pixel of frame i becomes (value - subtract[i]) * multiply[i] + add.
+    """
+
+    subtract: Float
+    multiply: Float
+    add: float
+
+
+def frame_estimates(
+    stack: npt.NDArray[np.floating], workers: int | None = None
+) -> tuple[Float, Float]:
+    """Location and scale of every frame of an (N, H, W) stack."""
+    with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
+        estimates = np.array(list(pool.map(ikss, stack)))
+    return estimates[:, 0], estimates[:, 1]
+
+
+def flux_normalization(locations: Float) -> Normalization:
+    """Match the brightness of frames by multiplication.
 
     Flat frames taken against a changing light source differ in brightness
-    but not in shape, so they are matched by multiplication.
+    but not in shape.
     """
-    with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
-        locations = np.array(list(pool.map(lambda frame: ikss(frame)[0], stack)))
-    gains: Float = locations[0] / locations
-    return gains
+    return Normalization(np.zeros(len(locations)), locations[0] / locations, 0.0)
+
+
+def level_and_scale_normalization(locations: Float, scales: Float) -> Normalization:
+    """Match both the background level and the spread of frames.
+
+    Light frames differ in sky brightness, which adds, and in transparency
+    and exposure, which scale the signal.
+    """
+    return Normalization(locations, scales[0] / scales, float(locations[0]))
+
+
+def noise_weights(noise: Float, normalization: Normalization) -> Float:
+    """Weights that favour the frames with less noise once normalised.
+
+    A frame's weight is the inverse of its noise variance after scaling,
+    relative to the first frame.
+    """
+    weights: Float = (noise[0] / (noise * normalization.multiply)) ** 2
+    return weights
 
 
 def integrate(
     stack: npt.NDArray[np.floating] | npt.NDArray[np.integer],
     sigma_low: float = 4.0,
     sigma_high: float = 3.0,
-    gains: Float | None = None,
+    normalization: Normalization | None = None,
+    weights: Float | None = None,
+    valid_range: tuple[float, float] | None = None,
     chunk_rows: int = 16,
     workers: int | None = None,
 ) -> Integration:
     """Average an (N, H, W) stack of frames, ignoring rejected pixels.
 
-    Each frame is first multiplied by its entry in gains, if given; flats
-    need that (see flux_gains), bias and dark frames do not. Frames are not
-    weighted. The stack is processed chunk_rows rows at a time, on workers
-    threads (one per CPU by default), to bound memory; it may be a
-    memory-mapped array.
+    Bias and dark frames are combined as they are. Flats and lights are
+    first normalised (see flux_normalization, level_and_scale_normalization)
+    so that frames can be compared, and lights are weighted by their noise.
+    With valid_range, pixels at or outside its limits, such as the black
+    borders of registered frames and saturated stars, are rejected outright.
+
+    The stack is processed chunk_rows rows at a time, on workers threads
+    (one per CPU by default), to bound memory; it may be a memory-mapped
+    array.
     """
     frames, height, width = stack.shape
     image = np.empty((height, width), np.float32)
@@ -195,16 +251,23 @@ def integrate(
     rejection_high = np.empty((height, width), np.float32)
     frame_low = np.zeros(frames, np.int64)
     frame_high = np.zeros(frames, np.int64)
+    frame_weights = np.ones(frames) if weights is None else weights
 
     def integrate_rows(top: int) -> tuple[Index, Index]:
         rows = slice(top, min(top + chunk_rows, height))
         chunk = np.asarray(stack[:, rows, :], dtype=np.float64).reshape(frames, -1)
-        if gains is not None:
-            # Rounded to 32 bits, as PixInsight holds the scaled samples.
-            chunk = (chunk * gains[:, None]).astype(np.float32).astype(np.float64)
-        low, high = winsorized_sigma_clip(chunk, sigma_low, sigma_high)
-        kept = ~(low | high)
-        mean = np.where(kept, chunk, 0.0).sum(axis=0) / kept.sum(axis=0)
+        too_low = too_high = None
+        if valid_range is not None:
+            too_low, too_high = chunk <= valid_range[0], chunk >= valid_range[1]
+        if normalization is not None:
+            chunk = (chunk - normalization.subtract[:, None]) * normalization.multiply[:, None]
+            # Rounded to 32 bits, as PixInsight holds the normalised samples.
+            chunk = (chunk + normalization.add).astype(np.float32).astype(np.float64)
+        low, high = winsorized_sigma_clip(chunk, sigma_low, sigma_high, too_low, too_high)
+        kept = ~(low | high) * frame_weights[:, None]
+        total = kept.sum(axis=0)
+        with np.errstate(invalid="ignore"):
+            mean = np.where(total > 0, (kept * chunk).sum(axis=0) / total, 0.0)
         shape = image[rows].shape
         image[rows] = mean.reshape(shape)
         rejection_low[rows] = (low.sum(axis=0) / frames).reshape(shape)

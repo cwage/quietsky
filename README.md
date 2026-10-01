@@ -18,7 +18,7 @@ line: the PixInsight workflow without the GUI.
 | Star detection | done; our own detector, positions good to a tenth of a pixel on synthetic fields |
 | Star matching and transformation | done; agrees with PixInsight's alignment to about 0.1 px |
 | Resampling (Lanczos-3 with clamping) | done; reproduces PixInsight's registered pixels to float precision once given its transformation |
-| Light integration | not started |
+| Integrate registered lights (normalised, noise-weighted) | done; identical to PixInsight on the parts of the frame tested, apart from a rare difference of one unit in the last place |
 
 The remaining steps are tracked as issues in the repository.
 
@@ -34,7 +34,8 @@ Everything runs in Docker.
     docker compose run --rm starkiller starkiller calibrate LIGHT... --bias master_bias.fits --dark master_dark.fits --flat master_flat.fits -o lights/
     docker compose run --rm starkiller starkiller debayer lights/*.fits -o rgb/
     docker compose run --rm starkiller starkiller register rgb/*.fits --reference rgb/FIRST_d.fits -o registered/
-    docker compose run --rm starkiller starkiller preview master_bias.fits -o master_bias.png
+    docker compose run --rm starkiller starkiller stack --light registered/*.fits -o master_light.fits
+    docker compose run --rm starkiller starkiller preview master_light.fits -o master_light.png
 
 The container sees the project at `/app` and the picture archive read-only at
 `/data` (`/mnt/nas/Pictures` unless `STARKILLER_DATA_DIR` says otherwise).
@@ -53,8 +54,8 @@ archive at `2018-09-12/m13`.
 
 `tests/data/m13` holds a 256x256 crop around the cluster of every raw frame,
 as FITS, and the same crop of PixInsight's four master frames, of its
-calibrated flats and of three sample lights after each stage, with the
-per-frame numbers from its log. `make fixtures`
+calibrated flats and of three sample lights after each stage, a 96x96 crop
+of all 43 registered lights, and the per-frame numbers from its log. `make fixtures`
 regenerates it. Bias and dark integration works one pixel stack at a time, so
 the fast tests can compare our result on the crops with the crop of
 PixInsight's master. The tests marked `nas` repeat the comparison on the full
@@ -121,3 +122,11 @@ Things that had to be found out to get an exact match, and are easy to lose:
 - **Interpolation.** Lanczos-3 with clamping threshold c = 0.3: the negative
   lobes' contribution is left alone while it is under c times the positive
   lobes', and scaled by 1 - ((r - c) / (1 - c))^2 for a ratio r above that.
+- **Light integration.** Each channel is integrated on its own. A frame is
+  normalised as (value - level) x (reference scale / scale) + reference
+  level, with level and scale from the iterative k-sigma estimator over the
+  whole registered frame, black borders included. Its weight is (reference
+  noise / (noise x scale factor)) squared, where the noise is the estimate
+  made after demosaicing and carried in the file, not one made on the
+  registered frame. Pixels at 0 or at 0.98 and above are rejected before
+  clipping and count as rejected low or high.

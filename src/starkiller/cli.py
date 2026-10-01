@@ -4,12 +4,21 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 from PIL import Image
 
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import BAYER_PATTERNS, debayer_vng
 from starkiller.frame import Frame, load, normalized, save_fits
-from starkiller.integrate import flux_gains, integrate
+from starkiller.integrate import (
+    Integration,
+    flux_normalization,
+    frame_estimates,
+    integrate,
+    level_and_scale_normalization,
+    noise_weights,
+)
+from starkiller.noise import evaluate_noise
 from starkiller.register import RegistrationError, solve_transformation
 from starkiller.resample import resample
 from starkiller.stars import detect_stars
@@ -27,15 +36,49 @@ def _info(args: argparse.Namespace) -> None:
             print(f"  {key:8} {value}")
 
 
+# Pixels at or beyond these limits are black registration borders or
+# saturated, and are left out when lights are combined.
+LIGHT_RANGE = (0.0, 0.98)
+
+
+def _integrate_light_channel(
+    stack: npt.NDArray[np.float32], frames: list[Frame], channel: int, args: argparse.Namespace
+) -> Integration:
+    locations, scales = frame_estimates(stack)
+    normalization = level_and_scale_normalization(locations, scales)
+    # Noise measured before registration, which smooths it, if the frames carry it.
+    key = f"NOISE{channel:02d}"
+    if all(key in frame.header for frame in frames):
+        noise = np.array([float(frame.header[key]) for frame in frames])
+    else:
+        noise = np.array([evaluate_noise(image).sigma for image in stack])
+    weights = noise_weights(noise, normalization)
+    return integrate(
+        stack, args.sigma_low, args.sigma_high, normalization, weights, valid_range=LIGHT_RANGE
+    )
+
+
 def _stack(args: argparse.Namespace) -> None:
-    stack = np.stack([normalized(load(path).data) for path in args.files])
-    gains = flux_gains(stack) if args.flat else None
-    result = integrate(stack, args.sigma_low, args.sigma_high, gains)
-    total = stack[0].size * len(args.files)
-    low, high = result.frame_rejected_low.sum(), result.frame_rejected_high.sum()
+    frames = [load(path) for path in args.files]
+    stack = np.stack([normalized(frame.data) for frame in frames])
+    if args.light:
+        channels = stack[..., None] if stack.ndim == 3 else stack
+        results = [
+            _integrate_light_channel(channels[..., channel], frames, channel, args)
+            for channel in range(channels.shape[-1])
+        ]
+        image = np.stack([result.image for result in results], axis=-1)
+        image = image[..., 0] if stack.ndim == 3 else image
+    else:
+        normalization = flux_normalization(frame_estimates(stack)[0]) if args.flat else None
+        results = [integrate(stack, args.sigma_low, args.sigma_high, normalization)]
+        image = results[0].image
+    total = stack.size
+    low = sum(result.frame_rejected_low.sum() for result in results)
+    high = sum(result.frame_rejected_high.sum() for result in results)
     print(f"integrated {len(args.files)} frames")
     print(f"rejected low {low} ({low / total:.3%}), high {high} ({high / total:.3%})")
-    save_fits(args.output, Frame(result.image, {"NCOMBINE": len(args.files)}))
+    save_fits(args.output, Frame(image, {"NCOMBINE": len(args.files)}))
     print(f"wrote {args.output}")
 
 
@@ -64,8 +107,13 @@ def _debayer(args: argparse.Namespace) -> None:
         if not isinstance(pattern, str):
             raise SystemExit(f"{path}: no BAYERPAT in the header; give --pattern")
         header = {key: value for key, value in frame.header.items() if key != "BAYERPAT"}
+        rgb = debayer_vng(normalized(frame.data), pattern)
+        # Recorded now because registration will smooth the noise; light
+        # integration weights frames by it.
+        for channel in range(3):
+            header[f"NOISE{channel:02d}"] = evaluate_noise(rgb[..., channel]).sigma
         output = args.output / f"{path.stem}_d.fits"
-        save_fits(output, Frame(debayer_vng(normalized(frame.data), pattern), header))
+        save_fits(output, Frame(rgb, header))
         print(f"{output}: {pattern}")
 
 
@@ -105,16 +153,23 @@ def main(argv: list[str] | None = None) -> None:
     info.set_defaults(run=_info)
 
     stack = commands.add_parser(
-        "stack", help="average bias, dark or flat frames with outlier rejection"
+        "stack", help="average bias, dark, flat or registered light frames with outlier rejection"
     )
     stack.add_argument("files", nargs="+", type=Path)
     stack.add_argument("-o", "--output", type=Path, required=True, help="FITS file to write")
     stack.add_argument("--sigma-low", type=float, default=4.0)
     stack.add_argument("--sigma-high", type=float, default=3.0)
-    stack.add_argument(
+    kind = stack.add_mutually_exclusive_group()
+    kind.add_argument(
         "--flat",
         action="store_true",
         help="match the brightness of the frames before combining them, as flats need",
+    )
+    kind.add_argument(
+        "--light",
+        action="store_true",
+        help="match level and scale, weight frames by noise and ignore black or saturated "
+        "pixels, as registered lights need",
     )
     stack.set_defaults(run=_stack)
 

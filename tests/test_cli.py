@@ -10,7 +10,7 @@ from starkiller.calibrate import calibrate, unit_flat
 from starkiller.cli import main
 from starkiller.debayer import debayer_vng
 from starkiller.frame import Frame, load, normalized, save_fits
-from starkiller.integrate import flux_gains, integrate
+from starkiller.integrate import flux_normalization, frame_estimates, integrate
 from starkiller.stars import detect_stars
 
 
@@ -34,8 +34,30 @@ def test_stack_flat_matches_brightness_before_integrating(tmp_path: Path) -> Non
     main(["stack", "--flat", *map(str, inputs), "-o", str(output)])
 
     stack = normalized(m13.frames("flat"))
-    expected = integrate(stack, gains=flux_gains(stack))
+    expected = integrate(stack, normalization=flux_normalization(frame_estimates(stack)[0]))
     np.testing.assert_array_equal(load(output).data, expected.image)
+
+
+def test_stack_light_combines_colour_frames_at_the_level_of_the_first(tmp_path: Path) -> None:
+    rng = np.random.default_rng(6)
+    scene = rng.uniform(0.0, 0.01, (40, 50, 3)).astype(np.float32)
+    paths = []
+    for index, sky in enumerate([0.10, 0.12, 0.15, 0.11, 0.13, 0.14, 0.12, 0.16]):
+        frame = sky + scene + rng.normal(0, 0.0005, scene.shape).astype(np.float32)
+        if index == 3:
+            frame[20, 25] += 0.3  # a satellite trail pixel
+        if index == 5:
+            frame[:, :4] = 0.0  # shifted off this edge by registration
+        paths.append(tmp_path / f"light{index}.fits")
+        save_fits(paths[-1], Frame(frame.astype(np.float32)))
+    output = tmp_path / "master_light.fits"
+
+    main(["stack", "--light", *map(str, paths), "-o", str(output)])
+
+    master = load(output).data
+    assert master.shape == (40, 50, 3)
+    np.testing.assert_allclose(master, 0.10 + scene, atol=0.002)
+    assert master[:, :4].min() > 0.09  # the black border did not drag the average down
 
 
 def test_calibrate_writes_each_frame_minus_bias_and_scaled_dark(
@@ -107,6 +129,8 @@ def test_debayer_writes_rgb_frames_using_the_pattern_in_the_header(tmp_path: Pat
     np.testing.assert_array_equal(result.data, debayer_vng(normalized(load(light).data), "RGGB"))
     assert "BAYERPAT" not in result.header
     assert result.header["EXPTIME"] == 30.0
+    noise = [result.header[f"NOISE{channel:02d}"] for channel in range(3)]
+    assert all(isinstance(value, float) and 0 < value < 0.001 for value in noise)
 
 
 def test_register_aligns_frames_to_the_reference(
