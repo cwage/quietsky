@@ -11,9 +11,10 @@ build:
 
 # Fast tests: synthetic data and the cropped M13 fixtures in tests/data.
 test:
-	$(RUN) pytest -m "not nas"
+	$(RUN) pytest -m "not nas and not slow"
 
-# Also the full-frame comparisons against PixInsight, which read the NAS.
+# Also the slow tests and the full-frame comparisons against PixInsight,
+# which read the NAS.
 test-all:
 	$(RUN) pytest
 
