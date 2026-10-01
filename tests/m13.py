@@ -50,7 +50,31 @@ def rejected_per_frame(history: list[str], side: str) -> list[int]:
     ]
 
 
+def estimates_per_frame(history: list[str], name: str) -> list[list[float]]:
+    """A per-frame, per-channel quantity such as "scaleEstimates" from a history."""
+    return [
+        [float(value) for value in match.group(1).split()]
+        for line in history
+        if (match := re.search(rf"ImageIntegration\.{name}_\d+: (.+)", line))
+    ]
+
+
+def _master_record(kind: str) -> dict[str, list[str]]:
+    record: dict[str, list[str]] = json.loads(
+        (DATA / "reference" / f"master_{kind}.json").read_text()
+    )
+    return record
+
+
 def master_history(kind: str) -> list[str]:
     """PixInsight's processing history for a master, covering the full frames."""
-    history: list[str] = json.loads((DATA / "reference" / f"master_{kind}.json").read_text())
-    return history
+    return _master_record(kind)["history"]
+
+
+def master_inputs(kind: str) -> list[str]:
+    """Names of the files PixInsight integrated into a master, in its order.
+
+    Per-frame entries in the history follow this order, which is not always
+    the order of the file names.
+    """
+    return _master_record(kind)["inputs"]
