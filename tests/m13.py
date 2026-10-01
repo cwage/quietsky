@@ -135,3 +135,9 @@ def cosmetized_lights() -> dict[str, npt.NDArray[np.float32]]:
     """Crops of the sample lights after PixInsight's cosmetic correction, by raw frame name."""
     with np.load(DATA / "reference" / "cosmetized_light.npz") as arrays:
         return dict(arrays)
+
+
+def debayered_lights() -> dict[str, npt.NDArray[np.float32]]:
+    """Crops of the sample lights after PixInsight's VNG demosaicing, by raw frame name."""
+    with np.load(DATA / "reference" / "debayered_light.npz") as arrays:
+        return dict(arrays)
