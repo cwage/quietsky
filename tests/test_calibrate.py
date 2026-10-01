@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.calibrate import calibrate, optimization_dark, optimize_dark
+from starkiller.calibrate import calibrate, optimization_dark, optimize_dark, unit_flat
 from starkiller.frame import load_raw
 from starkiller.xisf import read_xisf
 
@@ -35,6 +35,24 @@ def test_calibrate_subtracts_bias_and_scaled_dark() -> None:
     np.testing.assert_allclose(result, [[0.008, 0.006], [0.008, 0.008]], rtol=1e-6)
 
 
+def test_calibrate_with_a_flat_evens_out_vignetting() -> None:
+    rows, columns = np.mgrid[:64, :64]
+    vignette = (1 - ((rows - 32) ** 2 + (columns - 32) ** 2) / 4000).astype(np.float32)
+    bias = np.full((64, 64), 0.002, np.float32)
+    frame = bias + np.float32(0.01) * vignette  # an even sky seen through the optics
+    flat = np.float32(0.3) * vignette
+
+    result = calibrate(frame, bias, bias, dark_scale=1.0, flat=unit_flat(flat))
+
+    np.testing.assert_allclose(result, 0.01 * vignette.mean(), rtol=1e-5)
+
+
+def test_unit_flat_has_a_mean_of_one() -> None:
+    flat = np.random.default_rng(1).uniform(0.2, 0.4, (32, 32)).astype(np.float32)
+
+    assert unit_flat(flat).mean() == pytest.approx(1.0, rel=1e-6)
+
+
 def test_optimization_dark_keeps_only_pixels_with_thermal_signal() -> None:
     _, bias, dark = synthetic_session(1.0)
 
@@ -64,6 +82,40 @@ def test_calibrated_flats_match_pixinsight() -> None:
 
         allowed = SCALE_PRECISION * np.abs(dark - bias) + ROUNDING
         assert (np.abs(result - reference[name]) <= allowed).all()
+
+
+def test_calibrated_lights_match_pixinsight() -> None:
+    bias = m13.master("bias")["integration"]
+    dark = m13.master("dark")["integration"]
+    flat = (m13.master("flat")["integration"] / m13.master_flat_mean()).astype(np.float32)
+    scales = m13.dark_scales("light")
+    lights = dict(zip(m13.frame_names("light"), m13.frames("light"), strict=True))
+
+    for name, reference in m13.calibrated_lights().items():
+        light = m13.as_pixinsight_loaded(lights[name])
+
+        result = calibrate(light, bias, dark, scales[name], flat)
+
+        allowed = SCALE_PRECISION * np.abs(dark - bias) / flat + 1e-6 * reference
+        assert (np.abs(result - reference) <= allowed).all()
+
+
+@pytest.mark.nas
+def test_full_frame_calibrated_light_matches_pixinsight() -> None:
+    output = m13.SESSION / "output"
+    bias = np.asarray(read_xisf(output / "master" / "bias-BINNING_1.xisf")[0].data)
+    dark = np.asarray(read_xisf(output / "master" / "dark-BINNING_1-EXPTIME_30.xisf")[0].data)
+    flat = unit_flat(
+        np.asarray(read_xisf(output / "master" / "flat-FILTER_m13-BINNING_1.xisf")[0].data)
+    )
+    name = "2018-09-12-20_45_50"
+    light = m13.as_pixinsight_loaded(load_raw(m13.SESSION / "light" / f"{name}.arw").data)
+    reference = read_xisf(output / "calibrated" / "light" / f"{name}_c.xisf")[0].data
+
+    result = calibrate(light, bias, dark, m13.dark_scales("light")[name], flat)
+
+    allowed = SCALE_PRECISION * np.abs(dark - bias) / flat + 1e-6 * reference
+    assert (np.abs(result - reference) <= allowed).all()
 
 
 @pytest.mark.nas

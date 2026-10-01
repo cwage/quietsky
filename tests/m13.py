@@ -117,3 +117,15 @@ def calibrated_flat_locations() -> dict[str, float]:
         (DATA / "reference" / "calibrated_flat_locations.json").read_text()
     )
     return locations
+
+
+def master_flat_mean() -> float:
+    """Mean of PixInsight's whole master flat, which flat division scales by."""
+    mean: float = json.loads((DATA / "reference" / "master_flat_mean.json").read_text())
+    return mean
+
+
+def calibrated_lights() -> dict[str, npt.NDArray[np.float32]]:
+    """Crops of PixInsight's calibrated lights, for a few sample frames, by raw frame name."""
+    with np.load(DATA / "reference" / "calibrated_light.npz") as arrays:
+        return dict(arrays)

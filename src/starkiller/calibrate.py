@@ -1,8 +1,10 @@
-"""Remove the sensor's fixed signal from a frame.
+"""Remove the sensor's and the optics' fixed signal from a frame.
 
-A raw frame is the light that reached the sensor plus a constant offset (the
-bias) and thermal signal that grows with exposure and temperature (the dark
-current). Calibration subtracts the master bias and a scaled master dark.
+A raw frame is the light that reached the sensor, dimmed towards the corners
+and under dust, plus a constant offset (the bias) and thermal signal that
+grows with exposure and temperature (the dark current). Calibration
+subtracts the master bias and a scaled master dark, then divides by the
+master flat.
 """
 
 import numpy as np
@@ -27,13 +29,37 @@ FIT_HALF_WIDTH = 0.3
 FIT_POINTS = 13
 
 
-def calibrate(frame: Float32, bias: Float32, dark: Float32, dark_scale: float) -> Float32:
+def calibrate(
+    frame: Float32,
+    bias: Float32,
+    dark: Float32,
+    dark_scale: float,
+    flat: Float32 | None = None,
+) -> Float32:
     """Subtract the master bias and dark_scale times the master dark.
 
     The master dark still contains the bias, as a stack of raw dark frames
     does, so the bias is taken out of it before scaling.
+
+    If a flat is given the result is divided by it, which evens out
+    vignetting and dust shadows. It must have a mean of one over the whole
+    frame (see unit_flat), so that the division leaves the overall level of
+    the frame alone.
     """
-    return (frame - bias) - np.float32(dark_scale) * (dark - bias)
+    result: Float32 = (frame - bias) - np.float32(dark_scale) * (dark - bias)
+    if flat is not None:
+        result = result / flat
+    return result
+
+
+def unit_flat(flat: Float32) -> Float32:
+    """Scale a master flat to a mean of one.
+
+    One mean is taken over all pixels, also for a colour mosaic, so dividing
+    by the result imprints the colour of the flat's light source on the frame.
+    """
+    scaled: Float32 = flat / np.float32(flat.mean(dtype=np.float64))
+    return scaled
 
 
 def _bin2(image: Float32) -> Float32:

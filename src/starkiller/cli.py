@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from starkiller.calibrate import calibrate, optimize_dark
+from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.frame import Frame, load, normalized, save_fits
 from starkiller.integrate import flux_gains, integrate
 from starkiller.stretch import autostretch
@@ -38,6 +38,7 @@ def _stack(args: argparse.Namespace) -> None:
 def _calibrate(args: argparse.Namespace) -> None:
     bias = normalized(load(args.bias).data)
     dark = normalized(load(args.dark).data)
+    flat = unit_flat(normalized(load(args.flat).data)) if args.flat else None
     args.output.mkdir(parents=True, exist_ok=True)
     for path in args.files:
         frame = load(path)
@@ -45,7 +46,7 @@ def _calibrate(args: argparse.Namespace) -> None:
         scale = args.dark_scale
         if scale is None:
             scale = optimize_dark(data, bias, dark, mosaic="BAYERPAT" in frame.header)
-        calibrated = calibrate(data, bias, dark, scale)
+        calibrated = calibrate(data, bias, dark, scale, flat)
         output = args.output / f"{path.stem}_c.fits"
         save_fits(output, Frame(calibrated, frame.header | {"DARKSCAL": round(scale, 4)}))
         print(f"{output}: dark scale {scale:.3f}")
@@ -80,11 +81,13 @@ def main(argv: list[str] | None = None) -> None:
     stack.set_defaults(run=_stack)
 
     calibration = commands.add_parser(
-        "calibrate", help="subtract a master bias and a scaled master dark from frames"
+        "calibrate",
+        help="subtract a master bias and a scaled master dark from frames, and divide by a flat",
     )
     calibration.add_argument("files", nargs="+", type=Path)
     calibration.add_argument("--bias", type=Path, required=True, help="master bias")
     calibration.add_argument("--dark", type=Path, required=True, help="master dark")
+    calibration.add_argument("--flat", type=Path, help="master flat to divide by (for lights)")
     calibration.add_argument(
         "--dark-scale",
         type=float,
