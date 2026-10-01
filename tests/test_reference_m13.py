@@ -37,8 +37,6 @@ def test_master_matches_pixinsight(kind: str) -> None:
     ],
 )
 def test_full_frame_master_matches_pixinsight(kind: str, directory: str, master: str) -> None:
-    if not m13.SESSION.exists():
-        pytest.skip(f"{m13.SESSION} is not mounted")
     paths = sorted((m13.SESSION / directory).glob("*.arw"))
     stack = np.stack([m13.as_pixinsight_loaded(load_raw(path).data) for path in paths])
     reference = read_xisf(m13.SESSION / "output" / "master" / master)[0]

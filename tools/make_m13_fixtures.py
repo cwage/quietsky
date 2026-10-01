@@ -9,6 +9,7 @@ crop of every frame, and of PixInsight's master frames, to tests/data/m13.
 
 import json
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -50,8 +51,23 @@ def crop_frames() -> None:
         print(f"{kind}: {len(paths)} frames")
 
 
+def integration_inputs(log: str, kind: str) -> list[str]:
+    """Names of the files PixInsight integrated into a master, in its order.
+
+    The order is not always that of the file names, and it is the order the
+    per-frame entries of the master's history follow.
+    """
+    section = log.split(f"* Begin integration of {kind} frames")[1]
+    section = section.split("Pixel rejection counts:")[0]
+    first = re.search(r"Opening files:\s*(?:\[.*?\]\s*)*(/\S+)", section)
+    assert first is not None
+    rest = re.findall(r"\] \[\d+\] (/\S+)", section)
+    return [Path(path).name for path in [first.group(1), *rest]]
+
+
 def crop_masters() -> None:
     (OUTPUT / "reference").mkdir(parents=True, exist_ok=True)
+    log = next((SESSION / "output" / "logs").glob("*.log")).read_text()
     for kind, name in MASTERS.items():
         integration, rejection_low, rejection_high = read_xisf(SESSION / "output" / "master" / name)
         np.savez_compressed(
@@ -63,7 +79,8 @@ def crop_masters() -> None:
         # The processing history records the settings PixInsight used and how
         # many pixels it rejected in each full frame.
         history = [text for key, text in integration.keywords if key == "HISTORY"]
-        (OUTPUT / "reference" / f"master_{kind}.json").write_text(json.dumps(history, indent=1))
+        record = {"inputs": integration_inputs(log, kind), "history": history}
+        (OUTPUT / "reference" / f"master_{kind}.json").write_text(json.dumps(record, indent=1))
         print(f"master {kind}")
 
 
