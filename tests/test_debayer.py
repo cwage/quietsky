@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.debayer import debayer_vng
-from starkiller.xisf import read_xisf
+from quietsky.debayer import debayer_vng
+from quietsky.xisf import read_xisf
 
 PATTERNS = ["RGGB", "BGGR", "GRBG", "GBRG"]
 

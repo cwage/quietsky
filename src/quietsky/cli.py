@@ -6,10 +6,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from starkiller.background import MODELS, STRUCTURE_WARNING, extract_background
-from starkiller.calibrate import calibrate, optimize_dark, unit_flat
-from starkiller.debayer import BAYER_PATTERNS, debayer_vng
-from starkiller.frame import (
+from quietsky.background import MODELS, STRUCTURE_WARNING, extract_background
+from quietsky.calibrate import calibrate, optimize_dark, unit_flat
+from quietsky.debayer import BAYER_PATTERNS, debayer_vng
+from quietsky.frame import (
     FITS_SUFFIXES,
     RAW_SUFFIXES,
     DiskStack,
@@ -19,17 +19,17 @@ from starkiller.frame import (
     normalized,
     save_fits,
 )
-from starkiller.integrate import (
+from quietsky.integrate import (
     flux_normalization,
     frame_estimates,
     integrate,
     integrate_lights,
 )
-from starkiller.pipeline import Session, frame_noise, noise_keywords, preprocess
-from starkiller.register import RegistrationError, solve_transformation
-from starkiller.resample import resample
-from starkiller.stars import detect_stars
-from starkiller.stretch import autostretch
+from quietsky.pipeline import Session, frame_noise, noise_keywords, preprocess
+from quietsky.register import RegistrationError, solve_transformation
+from quietsky.resample import resample
+from quietsky.stars import detect_stars
+from quietsky.stretch import autostretch
 
 
 def _info(args: argparse.Namespace) -> None:
@@ -175,7 +175,7 @@ def _preview(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="starkiller", description=__doc__)
+    parser = argparse.ArgumentParser(prog="quietsky", description=__doc__)
     commands = parser.add_subparsers(required=True)
 
     info = commands.add_parser("info", help="show size, statistics and header of frames")

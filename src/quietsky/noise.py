@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.wavelets import B3_NOISE_PER_LAYER, b3_layers
+from quietsky.wavelets import B3_NOISE_PER_LAYER, b3_layers
 
 # A coefficient is significant above this many noise deviations.
 SIGNIFICANCE = 3.0

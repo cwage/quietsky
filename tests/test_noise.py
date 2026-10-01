@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.noise import evaluate_noise, noise_mrs
-from starkiller.wavelets import B3_NOISE_PER_LAYER, b3_layers
-from starkiller.xisf import read_xisf
+from quietsky.noise import evaluate_noise, noise_mrs
+from quietsky.wavelets import B3_NOISE_PER_LAYER, b3_layers
+from quietsky.xisf import read_xisf
 
 SIGMA = 0.002
 

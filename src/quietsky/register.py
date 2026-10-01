@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.stars import Stars
+from quietsky.stars import Stars
 
 Float64 = npt.NDArray[np.float64]
 Index = npt.NDArray[np.intp]

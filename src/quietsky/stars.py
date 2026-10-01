@@ -12,8 +12,8 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.estimators import mad
-from starkiller.wavelets import b3_layers
+from quietsky.estimators import mad
+from quietsky.wavelets import b3_layers
 
 Float32 = npt.NDArray[np.float32]
 Float64 = npt.NDArray[np.float64]

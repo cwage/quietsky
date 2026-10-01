@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.estimators import biweight_midvariance, ikss, mad
-from starkiller.frame import load_raw
-from starkiller.xisf import read_xisf
+from quietsky.estimators import biweight_midvariance, ikss, mad
+from quietsky.frame import load_raw
+from quietsky.xisf import read_xisf
 
 
 def background(sigma: float = 0.002, size: int = 200_000) -> np.ndarray:

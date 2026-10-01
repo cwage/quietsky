@@ -14,8 +14,8 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.estimators import ikss
-from starkiller.frame import DiskStack
+from quietsky.estimators import ikss
+from quietsky.frame import DiskStack
 
 Float = npt.NDArray[np.float64]
 Bool = npt.NDArray[np.bool_]

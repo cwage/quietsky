@@ -3,13 +3,13 @@ import pytest
 
 import m13
 import synthetic
-from starkiller.register import (
+from quietsky.register import (
     RegistrationError,
     fit_homography,
     solve_transformation,
 )
-from starkiller.stars import Stars, detect_stars
-from starkiller.xisf import read_xisf
+from quietsky.stars import Stars, detect_stars
+from quietsky.xisf import read_xisf
 
 SHAPE = (400, 600)
 CORNERS_X = np.array([0.0, 599.0, 0.0, 599.0, 300.0])

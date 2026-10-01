@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.cosmetic import hot_pixels, replace_from_neighbours
-from starkiller.xisf import read_xisf
+from quietsky.cosmetic import hot_pixels, replace_from_neighbours
+from quietsky.xisf import read_xisf
 
 
 def test_hot_pixels_are_the_outliers_of_the_dark() -> None:

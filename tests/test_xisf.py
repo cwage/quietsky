@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from starkiller.xisf import read_xisf
+from quietsky.xisf import read_xisf
 
 HEADER_SIZE = 4096
 

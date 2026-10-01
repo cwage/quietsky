@@ -13,21 +13,21 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
-from starkiller.calibrate import calibrate, optimize_dark, unit_flat
-from starkiller.debayer import debayer_vng
-from starkiller.frame import DiskStack, Frame, HeaderValue, load, normalized, save_fits
-from starkiller.integrate import (
+from quietsky.calibrate import calibrate, optimize_dark, unit_flat
+from quietsky.debayer import debayer_vng
+from quietsky.frame import DiskStack, Frame, HeaderValue, load, normalized, save_fits
+from quietsky.integrate import (
     Stack,
     flux_normalization,
     frame_estimates,
     integrate,
     integrate_lights,
 )
-from starkiller.noise import evaluate_noise
-from starkiller.register import RegistrationError, solve_transformation
-from starkiller.resample import resample
-from starkiller.stars import detect_stars
-from starkiller.stretch import autostretch
+from quietsky.noise import evaluate_noise
+from quietsky.register import RegistrationError, solve_transformation
+from quietsky.resample import resample
+from quietsky.stars import detect_stars
+from quietsky.stretch import autostretch
 
 Float32 = npt.NDArray[np.float32]
 

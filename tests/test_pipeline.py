@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.cli import main
-from starkiller.frame import Frame, load, load_fits
-from starkiller.pipeline import Session, preprocess
-from starkiller.stars import detect_stars
+from quietsky.cli import main
+from quietsky.frame import Frame, load, load_fits
+from quietsky.pipeline import Session, preprocess
+from quietsky.stars import detect_stars
 
 # Every light covers this part of the fixture crop; nearer the edge some are
 # black after registration.

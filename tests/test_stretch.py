@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from starkiller.stretch import TARGET_BACKGROUND, autostretch, midtones
+from quietsky.stretch import TARGET_BACKGROUND, autostretch, midtones
 
 
 def linear_sky(median: float, seed: int = 1) -> np.ndarray:

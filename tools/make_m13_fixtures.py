@@ -1,10 +1,10 @@
 """Cut the M13 test fixtures out of the full data set.
 
 Reads the 2018-09-12 M13 session (Sony raw frames plus the output of a
-PixInsight BatchPreprocessing run) from $STARKILLER_DATA and writes a small
+PixInsight BatchPreprocessing run) from $QUIETSKY_DATA and writes a small
 crop of every frame, and of PixInsight's master frames, to tests/data/m13.
 
-    docker compose run --rm starkiller python tools/make_m13_fixtures.py
+    docker compose run --rm quietsky python tools/make_m13_fixtures.py
 """
 
 import json
@@ -15,11 +15,11 @@ from pathlib import Path
 
 import numpy as np
 
-from starkiller.estimators import ikss
-from starkiller.frame import Frame, load_raw, save_fits
-from starkiller.xisf import read_xisf
+from quietsky.estimators import ikss
+from quietsky.frame import Frame, load_raw, save_fits
+from quietsky.xisf import read_xisf
 
-SESSION = Path(os.environ["STARKILLER_DATA"]) / "2018-09-12" / "m13"
+SESSION = Path(os.environ["QUIETSKY_DATA"]) / "2018-09-12" / "m13"
 OUTPUT = Path(__file__).parent.parent / "tests" / "data" / "m13"
 
 # A window that keeps M13 in view in all the light frames. The origin is

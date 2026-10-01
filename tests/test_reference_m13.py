@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.frame import DiskStack, Frame, load_raw, save_fits
-from starkiller.integrate import (
+from quietsky.frame import DiskStack, Frame, load_raw, save_fits
+from quietsky.integrate import (
     Integration,
     Normalization,
     flux_normalization,
@@ -16,7 +16,7 @@ from starkiller.integrate import (
     level_and_scale_normalization,
     noise_weights,
 )
-from starkiller.xisf import read_xisf
+from quietsky.xisf import read_xisf
 
 
 @pytest.mark.parametrize("kind", ["bias", "dark"])

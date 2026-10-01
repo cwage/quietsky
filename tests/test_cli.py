@@ -6,12 +6,12 @@ from PIL import Image
 
 import m13
 import synthetic
-from starkiller.calibrate import calibrate, unit_flat
-from starkiller.cli import main
-from starkiller.debayer import debayer_vng
-from starkiller.frame import Frame, load, normalized, save_fits
-from starkiller.integrate import flux_normalization, frame_estimates, integrate
-from starkiller.stars import detect_stars
+from quietsky.calibrate import calibrate, unit_flat
+from quietsky.cli import main
+from quietsky.debayer import debayer_vng
+from quietsky.frame import Frame, load, normalized, save_fits
+from quietsky.integrate import flux_normalization, frame_estimates, integrate
+from quietsky.stars import detect_stars
 
 
 def test_stack_writes_the_integration_of_its_inputs(
