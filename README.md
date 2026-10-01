@@ -14,7 +14,8 @@ line: the PixInsight workflow without the GUI.
 | Calibrate with master bias, scaled master dark and master flat | done; arithmetic matches, the automatic dark scale is about 6% above PixInsight's |
 | Auto-stretched previews | done |
 | Cosmetic correction | partly: PixInsight's replacement value is matched; hot pixels are found from the master dark, not by PixInsight's automatic rule |
-| Debayer, registration, light integration | not started |
+| Debayer (VNG) | done, identical to PixInsight at all but about 30 pixels of a frame |
+| Registration, light integration | not started |
 
 The remaining steps are tracked as issues in the repository.
 
@@ -28,6 +29,7 @@ Everything runs in Docker.
     docker compose run --rm starkiller starkiller calibrate FLAT... --bias master_bias.fits --dark master_dark.fits -o flats/
     docker compose run --rm starkiller starkiller stack --flat flats/*.fits -o master_flat.fits
     docker compose run --rm starkiller starkiller calibrate LIGHT... --bias master_bias.fits --dark master_dark.fits --flat master_flat.fits -o lights/
+    docker compose run --rm starkiller starkiller debayer lights/*.fits -o rgb/
     docker compose run --rm starkiller starkiller preview master_bias.fits -o master_bias.png
 
 The container sees the project at `/app` and the picture archive read-only at
@@ -100,3 +102,8 @@ Things that had to be found out to get an exact match, and are easy to lose:
   5x5 neighbourhood or from the calibration masters tells the two groups
   apart. The few pixels it raised, beside saturated stars, follow no
   replacement rule we could find either.
+- **Debayer.** PixInsight's VNG is dcraw's, in floating point. The gradient
+  table in `debayer.py` was written from memory and then fitted to
+  PixInsight's output, which showed two weights to be wrong; it has not been
+  compared with dcraw's source. The outermost two pixels repeat the nearest
+  pixel inside them.

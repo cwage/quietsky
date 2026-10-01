@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
+from starkiller.debayer import BAYER_PATTERNS, debayer_vng
 from starkiller.frame import Frame, load, normalized, save_fits
 from starkiller.integrate import flux_gains, integrate
 from starkiller.stretch import autostretch
@@ -50,6 +51,19 @@ def _calibrate(args: argparse.Namespace) -> None:
         output = args.output / f"{path.stem}_c.fits"
         save_fits(output, Frame(calibrated, frame.header | {"DARKSCAL": round(scale, 4)}))
         print(f"{output}: dark scale {scale:.3f}")
+
+
+def _debayer(args: argparse.Namespace) -> None:
+    args.output.mkdir(parents=True, exist_ok=True)
+    for path in args.files:
+        frame = load(path)
+        pattern = args.pattern or frame.header.get("BAYERPAT")
+        if not isinstance(pattern, str):
+            raise SystemExit(f"{path}: no BAYERPAT in the header; give --pattern")
+        header = {key: value for key, value in frame.header.items() if key != "BAYERPAT"}
+        output = args.output / f"{path.stem}_d.fits"
+        save_fits(output, Frame(debayer_vng(normalized(frame.data), pattern), header))
+        print(f"{output}: {pattern}")
 
 
 def _preview(args: argparse.Namespace) -> None:
@@ -97,6 +111,16 @@ def main(argv: list[str] | None = None) -> None:
         "-o", "--output", type=Path, required=True, help="directory for the calibrated frames"
     )
     calibration.set_defaults(run=_calibrate)
+
+    debayer = commands.add_parser("debayer", help="turn colour mosaics into RGB images (VNG)")
+    debayer.add_argument("files", nargs="+", type=Path)
+    debayer.add_argument(
+        "--pattern", choices=BAYER_PATTERNS, help="Bayer pattern (default: BAYERPAT in the header)"
+    )
+    debayer.add_argument(
+        "-o", "--output", type=Path, required=True, help="directory for the RGB frames"
+    )
+    debayer.set_defaults(run=_debayer)
 
     preview = commands.add_parser("preview", help="write an auto-stretched PNG of a frame")
     preview.add_argument("file", type=Path)

@@ -116,6 +116,7 @@ def crop_light_stages() -> None:
     stages = {
         "calibrated_light": (directory, "_c"),
         "cosmetized_light": (directory / "cosmetized", "_c_cc"),
+        "debayered_light": (directory / "debayered", "_c_cc_d"),
     }
     for stage, (folder, suffix) in stages.items():
         crops = {

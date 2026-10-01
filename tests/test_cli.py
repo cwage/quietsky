@@ -7,6 +7,7 @@ from PIL import Image
 import m13
 from starkiller.calibrate import calibrate, unit_flat
 from starkiller.cli import main
+from starkiller.debayer import debayer_vng
 from starkiller.frame import load, normalized
 from starkiller.integrate import flux_gains, integrate
 
@@ -93,6 +94,17 @@ def test_calibrate_optimises_the_dark_scale_by_default(
     scale = load(tmp_path / f"{light.stem}_c.fits").header["DARKSCAL"]
     assert isinstance(scale, float)
     assert 0.5 < scale < 2.5  # the lights ran somewhat warmer than the darks
+
+
+def test_debayer_writes_rgb_frames_using_the_pattern_in_the_header(tmp_path: Path) -> None:
+    light = sorted((m13.DATA / "light").glob("*.fits"))[5]
+
+    main(["debayer", str(light), "-o", str(tmp_path)])
+
+    result = load(tmp_path / f"{light.stem}_d.fits")
+    np.testing.assert_array_equal(result.data, debayer_vng(normalized(load(light).data), "RGGB"))
+    assert "BAYERPAT" not in result.header
+    assert result.header["EXPTIME"] == 30.0
 
 
 def test_preview_writes_a_stretched_png(tmp_path: Path) -> None:
