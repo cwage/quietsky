@@ -146,10 +146,15 @@ registered. Background extraction with the default spline removed most of
 the galaxy's outer disk, because the galaxy fills the frame; `--model plane`
 keeps it, and the command now warns in this case.
 
+All 730 frames of that session then went through `preprocess` with no
+calibration frames: every one registered, in 34 minutes, and integrating
+them took under 10 minutes at a peak of 2.7 GB of memory. Lights are
+integrated from the registered files on disk, so their number is limited by
+disk space, not memory: the 730 registered frames take 18 GB.
+
 Still untested: raw files from cameras other than the Sony, long focal
 lengths where stars span many pixels, mosaics and frames at different
-scales, combining L, R, G and B into one image, and sets too large to hold
-in memory (#32).
+scales, and combining L, R, G and B into one image.
 
 ## Matching PixInsight
 

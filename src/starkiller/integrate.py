@@ -29,6 +29,10 @@ WINSOR_CUTOFF = 1.5
 WINSOR_SIGMA_CORRECTION = 1.134
 WINSOR_TOLERANCE = 0.0005
 WINSOR_MAX_ITERATIONS = 10_000
+# How many values, frames times pixels, one thread works on at a time, and
+# how many are read from the stack in one go. Together they bound memory.
+CHUNK_VALUES = 2_000_000
+BAND_VALUES = 128_000_000
 
 
 @dataclass(frozen=True)
@@ -235,7 +239,7 @@ def integrate(
     normalization: Normalization | None = None,
     weights: Float | None = None,
     valid_range: tuple[float, float] | None = None,
-    chunk_rows: int = 16,
+    chunk_rows: int | None = None,
     workers: int | None = None,
 ) -> Integration:
     """Average an (N, H, W) stack of frames, ignoring rejected pixels.
@@ -248,9 +252,11 @@ def integrate(
     except that a pixel saturated in every frame that covers it stays
     saturated.
 
-    The stack is processed chunk_rows rows at a time, on workers threads
-    (one per CPU by default), to bound memory; it may be a DiskStack, which
-    reads those rows from files as they are needed.
+    The stack may be a DiskStack. It is read in bands of rows, and each
+    band is processed a few rows at a time on workers threads (one per CPU
+    by default). Both sizes shrink as the number of frames grows, so memory
+    use stays about the same however many frames there are. chunk_rows
+    overrides the number of rows processed at a time.
     """
     frames, height, width = stack.shape
     image = np.empty((height, width), np.float32)
@@ -260,9 +266,14 @@ def integrate(
     frame_high = np.zeros(frames, np.int64)
     frame_weights = np.ones(frames) if weights is None else weights
 
-    def integrate_rows(top: int) -> tuple[Index, Index]:
-        rows = slice(top, min(top + chunk_rows, height))
-        chunk = np.asarray(stack[:, rows, :], dtype=np.float64).reshape(frames, -1)
+    values_per_row = frames * width
+    step = chunk_rows or max(CHUNK_VALUES // values_per_row, 1)
+    band_rows = max(BAND_VALUES // values_per_row, step)
+
+    def integrate_rows(band: npt.NDArray[Any], band_top: int, top: int) -> tuple[Index, Index]:
+        rows = slice(top, min(top + step, band_top + len(band[0])))
+        within = slice(rows.start - band_top, rows.stop - band_top)
+        chunk = np.asarray(band[:, within, :], dtype=np.float64).reshape(frames, -1)
         too_low = too_high = None
         if valid_range is not None:
             too_low, too_high = chunk <= valid_range[0], chunk >= valid_range[1]
@@ -286,9 +297,16 @@ def integrate(
         return low.sum(axis=1), high.sum(axis=1)
 
     with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
-        for low_counts, high_counts in pool.map(integrate_rows, range(0, height, chunk_rows)):
-            frame_low += low_counts
-            frame_high += high_counts
+        for band_top in range(0, height, band_rows):
+            band_bottom = min(band_top + band_rows, height)
+            # One read per frame for the whole band; for files on a spinning
+            # disk the reads, not the arithmetic, set the pace.
+            band = stack[:, band_top:band_bottom, :]
+            tops = range(band_top, band_bottom, step)
+            jobs = pool.map(integrate_rows, [band] * len(tops), [band_top] * len(tops), tops)
+            for low_counts, high_counts in jobs:
+                frame_low += low_counts
+                frame_high += high_counts
 
     return Integration(image, rejection_low, rejection_high, frame_low, frame_high)
 
