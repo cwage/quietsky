@@ -78,3 +78,15 @@ def master_inputs(kind: str) -> list[str]:
     the order of the file names.
     """
     return _master_record(kind)["inputs"]
+
+
+def debayer_noise() -> dict[str, list[list[float]]]:
+    """Noise PixInsight measured in each debayered light of the full session.
+
+    Maps the debayered file name to a (sigma, fraction of pixels) pair per
+    colour channel.
+    """
+    noise: dict[str, list[list[float]]] = json.loads(
+        (DATA / "reference" / "debayer_noise.json").read_text()
+    )
+    return noise
