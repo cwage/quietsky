@@ -9,7 +9,16 @@ from PIL import Image
 from starkiller.background import MODELS, STRUCTURE_WARNING, extract_background
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import BAYER_PATTERNS, debayer_vng
-from starkiller.frame import FITS_SUFFIXES, RAW_SUFFIXES, Frame, load, normalized, save_fits
+from starkiller.frame import (
+    FITS_SUFFIXES,
+    RAW_SUFFIXES,
+    DiskStack,
+    Frame,
+    load,
+    load_header,
+    normalized,
+    save_fits,
+)
 from starkiller.integrate import (
     flux_normalization,
     frame_estimates,
@@ -35,20 +44,24 @@ def _info(args: argparse.Namespace) -> None:
 
 
 def _stack(args: argparse.Namespace) -> None:
-    frames = [load(path) for path in args.files]
-    stack = np.stack([normalized(frame.data) for frame in frames])
     if args.light:
-        channels = stack[..., None] if stack.ndim == 3 else stack
+        # Lights are read from disk a few rows at a time: there can be
+        # hundreds of them.
+        first = load(args.files[0]).data
+        count = 1 if first.ndim == 2 else first.shape[-1]
+        channels = [DiskStack(args.files, channel) for channel in range(count)]
+        headers = [load_header(path) for path in args.files]
         results = integrate_lights(
-            channels, frame_noise(frames, channels), args.sigma_low, args.sigma_high
+            channels, frame_noise(headers, channels), args.sigma_low, args.sigma_high
         )
-        image = np.stack([result.image for result in results], axis=-1)
-        image = image[..., 0] if stack.ndim == 3 else image
+        image = np.squeeze(np.stack([result.image for result in results], axis=-1))
+        total = first.size * len(args.files)
     else:
+        stack = np.stack([normalized(load(path).data) for path in args.files])
         normalization = flux_normalization(frame_estimates(stack)[0]) if args.flat else None
         results = [integrate(stack, args.sigma_low, args.sigma_high, normalization)]
         image = results[0].image
-    total = stack.size
+        total = stack.size
     low = sum(result.frame_rejected_low.sum() for result in results)
     high = sum(result.frame_rejected_high.sum() for result in results)
     print(f"integrated {len(args.files)} frames")

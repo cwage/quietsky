@@ -6,17 +6,22 @@ tests/test_reference_m13.py checks against a 2018 PixInsight run.
 """
 
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 from starkiller.estimators import ikss
+from starkiller.frame import DiskStack
 
 Float = npt.NDArray[np.float64]
 Bool = npt.NDArray[np.bool_]
 Index = npt.NDArray[np.int64]
+# Frames to integrate: an (N, H, W) array, or the same read from files.
+Stack = npt.NDArray[Any] | DiskStack
 
 # Constants of the Winsorization step: clip at 1.5 sigma, then correct the
 # standard deviation of the clipped sample back to that of a normal one.
@@ -186,12 +191,12 @@ class Normalization:
     add: float
 
 
-def frame_estimates(
-    stack: npt.NDArray[np.floating], workers: int | None = None
-) -> tuple[Float, Float]:
+def frame_estimates(stack: Stack, workers: int | None = None) -> tuple[Float, Float]:
     """Location and scale of every frame of an (N, H, W) stack."""
     with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
-        estimates = np.array(list(pool.map(ikss, stack)))
+        # One frame per worker at a time, so a stack on disk is never
+        # loaded whole.
+        estimates = np.array(list(pool.map(lambda index: ikss(stack[index]), range(len(stack)))))
     return estimates[:, 0], estimates[:, 1]
 
 
@@ -224,7 +229,7 @@ def noise_weights(noise: Float, normalization: Normalization) -> Float:
 
 
 def integrate(
-    stack: npt.NDArray[np.floating] | npt.NDArray[np.integer],
+    stack: Stack,
     sigma_low: float = 4.0,
     sigma_high: float = 3.0,
     normalization: Normalization | None = None,
@@ -244,8 +249,8 @@ def integrate(
     saturated.
 
     The stack is processed chunk_rows rows at a time, on workers threads
-    (one per CPU by default), to bound memory; it may be a memory-mapped
-    array.
+    (one per CPU by default), to bound memory; it may be a DiskStack, which
+    reads those rows from files as they are needed.
     """
     frames, height, width = stack.shape
     image = np.empty((height, width), np.float32)
@@ -294,21 +299,21 @@ LIGHT_RANGE = (0.0, 0.98)
 
 
 def integrate_lights(
-    stack: npt.NDArray[np.floating],
+    channels: Sequence[Stack],
     noise: Float,
     sigma_low: float = 4.0,
     sigma_high: float = 3.0,
 ) -> list[Integration]:
     """Integrate registered lights, one result per colour channel.
 
-    stack is (N, H, W, C) and noise the (N, C) noise of each frame's
-    channels, ideally measured before registration, which smooths it. Each
-    channel is normalised in level and scale to the first frame, weighted by
-    noise and cleared of black and saturated pixels.
+    channels holds an (N, H, W) stack per colour channel and noise the
+    (N, C) noise of each frame's channels, ideally measured before
+    registration, which smooths it. Each channel is normalised in level and
+    scale to the first frame, weighted by noise and cleared of black and
+    saturated pixels.
     """
     results = []
-    for channel in range(stack.shape[-1]):
-        frames = stack[..., channel]
+    for channel, frames in enumerate(channels):
         normalization = level_and_scale_normalization(*frame_estimates(frames))
         weights = noise_weights(noise[:, channel], normalization)
         results.append(

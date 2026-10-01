@@ -1,5 +1,6 @@
 """Load and save image frames: camera raw files, FITS and XISF."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,64 @@ def save_fits(path: Path, frame: Frame) -> None:
     # FITS puts the origin at the bottom left; we keep row 0 at the top.
     hdu.header["ROWORDER"] = "TOP-DOWN"
     hdu.writeto(path, overwrite=True)
+
+
+def load_header(path: Path) -> dict[str, HeaderValue]:
+    """The header of a frame, without reading the pixels of a FITS file."""
+    if path.suffix.lower() not in FITS_SUFFIXES:
+        return load(path).header
+    with fits.open(path) as hdus:
+        hdu = next(h for h in hdus if h.header["NAXIS"] > 0)
+        return {
+            key: value
+            for key, value in hdu.header.items()
+            if key
+            and key not in ("COMMENT", "HISTORY")
+            and key.rstrip("0123456789") not in STRUCTURAL_KEYWORDS
+        }
+
+
+class DiskStack:
+    """One channel of many floating point FITS frames, read from disk on demand.
+
+    It stands in for an (N, H, W) array in the two ways integration uses a
+    stack: stack[i] is a whole frame, and stack[:, rows, :] a band of rows
+    across every frame. Only what is asked for is read, so the number of
+    frames is not limited by memory.
+    """
+
+    def __init__(self, paths: Sequence[Path], channel: int = 0) -> None:
+        self._paths = list(paths)
+        self._offsets = []
+        for path in self._paths:
+            with fits.open(path) as hdus:
+                hdu = next(h for h in hdus if h.header["NAXIS"] > 0)
+                header = hdu.header
+                if header["BITPIX"] not in (-32, -64):
+                    raise ValueError(f"not a floating point FITS image: {path}")
+                self._dtype = np.dtype(">f4" if header["BITPIX"] == -32 else ">f8")
+                self._height, self._width = header["NAXIS2"], header["NAXIS1"]
+                channels = header["NAXIS3"] if header["NAXIS"] == 3 else 1
+                if channel >= channels:
+                    raise ValueError(f"{path} has no channel {channel}")
+                plane = channel * self._height * self._width * self._dtype.itemsize
+                self._offsets.append(hdu.fileinfo()["datLoc"] + plane)
+        self.shape = (len(self._paths), self._height, self._width)
+
+    def __len__(self) -> int:
+        return len(self._paths)
+
+    def _rows(self, index: int, rows: slice) -> npt.NDArray[np.float32]:
+        top, bottom, _ = rows.indices(self._height)
+        with open(self._paths[index], "rb") as file:
+            file.seek(self._offsets[index] + top * self._width * self._dtype.itemsize)
+            data = np.fromfile(file, self._dtype, (bottom - top) * self._width)
+        return data.reshape(bottom - top, self._width).astype(np.float32)
+
+    def __getitem__(self, key: int | tuple[slice, slice, slice]) -> npt.NDArray[np.float32]:
+        if isinstance(key, tuple):
+            return np.stack([self._rows(index, key[1]) for index in range(len(self))])
+        return self._rows(key, slice(None))
 
 
 def load(path: Path) -> Frame:

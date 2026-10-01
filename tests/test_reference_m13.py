@@ -1,10 +1,12 @@
 """Compare our output with PixInsight's on the M13 session."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 import m13
-from starkiller.frame import load_raw
+from starkiller.frame import DiskStack, Frame, load_raw, save_fits
 from starkiller.integrate import (
     Integration,
     Normalization,
@@ -104,7 +106,7 @@ def test_full_frame_master_flat_matches_pixinsight() -> None:
     assert np.abs(result.frame_rejected_high - high).max() <= 2
 
 
-def integrate_light_channel(stack: np.ndarray, channel: int) -> Integration:
+def integrate_light_channel(stack: np.ndarray | DiskStack, channel: int) -> Integration:
     """Integrate one colour channel of registered lights the way PixInsight's run did."""
     normalization = level_and_scale_normalization(
         m13.registered_light_estimates("location")[:, channel],
@@ -169,3 +171,18 @@ def test_bands_of_the_full_master_light_match_pixinsight(top: int) -> None:
         expected = reference[rows, :, channel]
         np.testing.assert_allclose(result.image, expected, rtol=2e-7, atol=1e-12)
         assert (result.image == expected).mean() > 0.999
+
+
+def test_integrating_from_disk_gives_the_same_as_from_memory(tmp_path: Path) -> None:
+    lights = m13.registered_lights()
+    paths = [tmp_path / f"light{index:02d}.fits" for index in range(len(lights))]
+    for path, light in zip(paths, lights, strict=True):
+        save_fits(path, Frame(light))
+
+    for channel in range(3):
+        from_disk = integrate_light_channel(DiskStack(paths, channel), channel)
+        from_memory = integrate_light_channel(lights[..., channel], channel)
+
+        np.testing.assert_array_equal(from_disk.image, from_memory.image)
+        np.testing.assert_array_equal(from_disk.rejection_high, from_memory.rejection_high)
+        assert from_disk.frame_rejected_low.tolist() == from_memory.frame_rejected_low.tolist()

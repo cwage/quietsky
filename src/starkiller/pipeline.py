@@ -5,7 +5,7 @@ with them, demosaiced, aligned to the first light and written out; the
 aligned lights are integrated into the master light.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,8 +15,9 @@ from PIL import Image
 
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import debayer_vng
-from starkiller.frame import Frame, HeaderValue, load, normalized, save_fits
+from starkiller.frame import DiskStack, Frame, HeaderValue, load, normalized, save_fits
 from starkiller.integrate import (
+    Stack,
     flux_normalization,
     frame_estimates,
     integrate,
@@ -60,20 +61,20 @@ def noise_keywords(image: Float32) -> dict[str, HeaderValue]:
 
 
 def frame_noise(
-    frames: Sequence[Frame], stack: npt.NDArray[np.floating]
+    headers: Sequence[Mapping[str, HeaderValue]], channels: Sequence[Stack]
 ) -> npt.NDArray[np.float64]:
-    """Noise of each channel of each frame of an (N, H, W, C) stack, as (N, C).
+    """Noise of each channel of each frame, as (N, C).
 
     Taken from the frames' NOISE keywords where they all have them, and
-    measured on the stack otherwise.
+    measured on the frames otherwise.
     """
-    noise = np.empty((len(frames), stack.shape[-1]))
-    for channel in range(stack.shape[-1]):
+    noise = np.empty((len(headers), len(channels)))
+    for channel, stack in enumerate(channels):
         key = f"NOISE{channel:02d}"
-        if all(key in frame.header for frame in frames):
-            noise[:, channel] = [float(frame.header[key]) for frame in frames]
+        if all(key in header for header in headers):
+            noise[:, channel] = [float(header[key]) for header in headers]
         else:
-            noise[:, channel] = [evaluate_noise(image[..., channel]).sigma for image in stack]
+            noise[:, channel] = [evaluate_noise(stack[index]).sigma for index in range(len(stack))]
     return noise
 
 
@@ -162,8 +163,9 @@ def preprocess(
     ]
     report("lights calibrated with: " + (", ".join(corrections) or "nothing"))
 
-    aligned: list[Float32] = []
-    frames: list[Frame] = []
+    written: list[Path] = []
+    headers: list[dict[str, HeaderValue]] = []
+    channel_count = 1
     reference_stars = None
     if reference is not None:
         reference_stars = detect_stars(load_normalized(reference).data)
@@ -194,22 +196,24 @@ def preprocess(
                 f"{path.name}: {transformation.pairs} stars matched, "
                 f"rms {transformation.rms:.2f} px, dark scale {dark_scale:.3f}"
             )
-        save_fits(registered / f"{path.stem}_r.fits", Frame(np.squeeze(image), header))
-        aligned.append(image)
-        frames.append(Frame(image, header))
+        written.append(registered / f"{path.stem}_r.fits")
+        save_fits(written[-1], Frame(np.squeeze(image), header))
+        headers.append(header)
+        channel_count = image.shape[-1]
 
-    stack = np.stack(aligned)
-    del aligned
-    results = integrate_lights(stack, frame_noise(frames, stack))
+    # Integrated from the files just written, a few rows at a time, so the
+    # number of lights is not limited by memory.
+    channels = [DiskStack(written, channel) for channel in range(channel_count)]
+    results = integrate_lights(channels, frame_noise(headers, channels))
     light = np.squeeze(np.stack([result.image for result in results], axis=-1))
-    total = stack.size
+    total = int(np.prod(channels[0].shape)) * channel_count
     low = sum(int(result.frame_rejected_low.sum()) for result in results)
     high = sum(int(result.frame_rejected_high.sum()) for result in results)
     report(
-        f"master light from {len(frames)} frames, "
+        f"master light from {len(written)} frames, "
         f"rejected low {low / total:.3%}, high {high / total:.3%}"
     )
     path = master / "light.fits"
-    save_fits(path, Frame(light, {"NCOMBINE": len(frames)}))
+    save_fits(path, Frame(light, {"NCOMBINE": len(written)}))
     Image.fromarray((autostretch(light) * 255 + 0.5).astype(np.uint8)).save(master / "light.png")
     return path
