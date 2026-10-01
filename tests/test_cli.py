@@ -171,7 +171,7 @@ def test_background_writes_the_corrected_image_and_the_model(
     source, output, model = tmp_path / "in.fits", tmp_path / "out.fits", tmp_path / "model.fits"
     save_fits(source, Frame(image))
 
-    main(["background", str(source), "-o", str(output), "--model", str(model)])
+    main(["background", str(source), "-o", str(output), "--write-model", str(model)])
 
     corrected = load(output).data
     left, right = np.median(corrected[:, :50]), np.median(corrected[:, -50:])
@@ -179,7 +179,7 @@ def test_background_writes_the_corrected_image_and_the_model(
     np.testing.assert_allclose(
         load(model).data + corrected, image + np.median(load(model).data), atol=1e-6
     )
-    assert "kept" in capsys.readouterr().out
+    assert "spline model from" in capsys.readouterr().out
 
 
 def test_preprocess_needs_light_frames(tmp_path: Path) -> None:

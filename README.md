@@ -47,6 +47,12 @@ Then take the sky gradient out of the master light:
 
     docker compose run --rm starkiller starkiller background out/session/master/light.fits -o out/session/master/light_bg.fits
 
+That fits a spline through samples of the sky, which is right when most of
+the frame is sky. If the target fills the frame, add `--model plane`: the
+spline would follow the target and remove it. The command warns when the
+samples look like more than sky, but it cannot tell a featureless glow from
+a gradient, so this is yours to judge.
+
 The preprocessing steps are also available one at a time:
 
     docker compose run --rm starkiller starkiller info FRAME...
@@ -136,8 +142,9 @@ frames never saturate, so nothing there could have shown it.
 **M31, 2025-09-26** (`2025-09-26/M31`): a Seestar S50, 2-megapixel GRBG FITS
 files of 10 s, no calibration frames, with field rotation. Twelve frames
 went through `debayer`, `register`, `stack --light` and `background`. All
-registered. Background extraction removed most of the galaxy's outer disk,
-because the galaxy fills the frame (#33).
+registered. Background extraction with the default spline removed most of
+the galaxy's outer disk, because the galaxy fills the frame; `--model plane`
+keeps it, and the command now warns in this case.
 
 Still untested: raw files from cameras other than the Sony, long focal
 lengths where stars span many pixels, mosaics and frames at different
