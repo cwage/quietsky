@@ -1,6 +1,6 @@
 import numpy as np
 
-from starkiller.integrate import integrate, winsorized_sigma_clip
+from starkiller.integrate import flux_gains, integrate, winsorized_sigma_clip
 
 
 def noise(frames: int, pixels: int, seed: int = 1) -> np.ndarray:
@@ -82,3 +82,40 @@ def test_integrate_does_not_depend_on_chunk_size() -> None:
     np.testing.assert_array_equal(whole.rejection_high, by_row.rejection_high)
     assert whole.frame_rejected_low.tolist() == by_row.frame_rejected_low.tolist()
     assert whole.frame_rejected_high.tolist() == by_row.frame_rejected_high.tolist()
+
+
+def flats_of_varying_brightness() -> tuple[np.ndarray, np.ndarray]:
+    """Noisy copies of one vignetted field under a light that slowly fades."""
+    rows, columns = np.mgrid[:32, :48]
+    field = 0.5 - ((rows - 16) ** 2 + (columns - 24) ** 2) / 4000
+    brightness = np.linspace(1.0, 0.8, 10)
+    noise = np.random.default_rng(3).normal(1, 0.002, (10, 32, 48))
+    return field * brightness[:, None, None] * noise, brightness
+
+
+def test_flux_gains_undo_the_change_in_brightness() -> None:
+    stack, brightness = flats_of_varying_brightness()
+
+    np.testing.assert_allclose(flux_gains(stack), brightness[0] / brightness, rtol=2e-3)
+
+
+def test_integrate_with_gains_combines_frames_at_the_level_of_the_first() -> None:
+    stack, brightness = flats_of_varying_brightness()
+    stack[6, 10, 10] *= 1.2  # a cosmic ray hit in one of the dimmer frames
+
+    result = integrate(stack, gains=brightness[0] / brightness)
+
+    rows, columns = np.mgrid[:32, :48]
+    field = 0.5 - ((rows - 16) ** 2 + (columns - 24) ** 2) / 4000
+    np.testing.assert_allclose(result.image, field, rtol=3e-3)
+    assert result.frame_rejected_high[6] >= 1
+    assert result.rejection_high[10, 10] > 0
+
+
+def test_without_gains_an_outlier_in_a_dim_frame_goes_unnoticed() -> None:
+    stack, _ = flats_of_varying_brightness()
+    stack[6, 10, 10] *= 1.2  # no brighter than the same pixel in the first frame
+
+    result = integrate(stack)
+
+    assert result.rejection_high[10, 10] == 0

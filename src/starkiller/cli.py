@@ -8,7 +8,7 @@ from PIL import Image
 
 from starkiller.calibrate import calibrate, optimize_dark
 from starkiller.frame import Frame, load, normalized, save_fits
-from starkiller.integrate import integrate
+from starkiller.integrate import flux_gains, integrate
 from starkiller.stretch import autostretch
 
 
@@ -25,7 +25,8 @@ def _info(args: argparse.Namespace) -> None:
 
 def _stack(args: argparse.Namespace) -> None:
     stack = np.stack([normalized(load(path).data) for path in args.files])
-    result = integrate(stack, args.sigma_low, args.sigma_high)
+    gains = flux_gains(stack) if args.flat else None
+    result = integrate(stack, args.sigma_low, args.sigma_high, gains)
     total = stack[0].size * len(args.files)
     low, high = result.frame_rejected_low.sum(), result.frame_rejected_high.sum()
     print(f"integrated {len(args.files)} frames")
@@ -65,12 +66,17 @@ def main(argv: list[str] | None = None) -> None:
     info.set_defaults(run=_info)
 
     stack = commands.add_parser(
-        "stack", help="average frames with outlier rejection (bias and dark frames)"
+        "stack", help="average bias, dark or flat frames with outlier rejection"
     )
     stack.add_argument("files", nargs="+", type=Path)
     stack.add_argument("-o", "--output", type=Path, required=True, help="FITS file to write")
     stack.add_argument("--sigma-low", type=float, default=4.0)
     stack.add_argument("--sigma-high", type=float, default=3.0)
+    stack.add_argument(
+        "--flat",
+        action="store_true",
+        help="match the brightness of the frames before combining them, as flats need",
+    )
     stack.set_defaults(run=_stack)
 
     calibration = commands.add_parser(

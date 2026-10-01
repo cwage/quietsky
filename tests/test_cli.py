@@ -8,7 +8,7 @@ import m13
 from starkiller.calibrate import calibrate
 from starkiller.cli import main
 from starkiller.frame import load, normalized
-from starkiller.integrate import integrate
+from starkiller.integrate import flux_gains, integrate
 
 
 def test_stack_writes_the_integration_of_its_inputs(
@@ -22,6 +22,17 @@ def test_stack_writes_the_integration_of_its_inputs(
     expected = integrate(normalized(m13.frames("bias")))
     np.testing.assert_array_equal(load(output).data, expected.image)
     assert "integrated 20 frames" in capsys.readouterr().out
+
+
+def test_stack_flat_matches_brightness_before_integrating(tmp_path: Path) -> None:
+    inputs = sorted((m13.DATA / "flat").glob("*.fits"))
+    output = tmp_path / "master_flat.fits"
+
+    main(["stack", "--flat", *map(str, inputs), "-o", str(output)])
+
+    stack = normalized(m13.frames("flat"))
+    expected = integrate(stack, gains=flux_gains(stack))
+    np.testing.assert_array_equal(load(output).data, expected.image)
 
 
 def test_calibrate_writes_each_frame_minus_bias_and_scaled_dark(
