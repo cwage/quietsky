@@ -108,6 +108,42 @@ tenth of a pixel), and the uncorrected hot pixels. The run took 19 minutes
 on 16 cores while sharing them with another run; PixInsight took 15 and a
 half minutes in 2018.
 
+## Other data
+
+Everything above was developed against one colour camera. Two other
+sessions have been run to see what that left untested. Neither has
+PixInsight output, so they show that the pipeline works, not that it
+matches anything.
+
+**M81, 2019-04-16** (`laptoppics/old2/old/20190417`): a cooled mono ZWO
+ASI1600MM Pro at 430 mm, 16-megapixel FITS files from N.I.N.A., 20 lights of
+120 s in each of L, R, G and B, 20 darks, 10 flats per filter, no bias. Each
+filter went through `preprocess` on its own, the colour filters with
+`--reference` set to the first registered luminance frame:
+
+    docker compose run --rm starkiller starkiller preprocess --dark D/DARK --flat D/FLAT/L --light D/LIGHT/L -o out/m81/L
+    docker compose run --rm starkiller starkiller preprocess --dark D/DARK --flat D/FLAT/R --light D/LIGHT/R --reference out/m81/L/registered/FIRST_r.fits -o out/m81/R
+
+All 80 lights registered, with about 1,950 stars matched per luminance
+frame at 0.38 px rms. The R, G and B masters sit within 0.01 px of the L
+master on average. A luminance run takes about four and a half minutes.
+
+It found one bug: the cores of bright stars, saturated in every frame, came
+out black, because saturated pixels were rejected and nothing was left. A
+pixel saturated in every frame that covers it now stays saturated. The M13
+frames never saturate, so nothing there could have shown it.
+
+**M31, 2025-09-26** (`2025-09-26/M31`): a Seestar S50, 2-megapixel GRBG FITS
+files of 10 s, no calibration frames, with field rotation. Twelve frames
+went through `debayer`, `register`, `stack --light` and `background`. All
+registered. Background extraction removed most of the galaxy's outer disk,
+because the galaxy fills the frame (#33).
+
+Still untested: raw files from cameras other than the Sony, long focal
+lengths where stars span many pixels, mosaics and frames at different
+scales, combining L, R, G and B into one image, and sets too large to hold
+in memory (#32).
+
 ## Matching PixInsight
 
 Things that had to be found out to get an exact match, and are easy to lose:

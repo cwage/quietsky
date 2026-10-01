@@ -140,7 +140,7 @@ def _preprocess(args: argparse.Namespace) -> None:
     )
     if not session.light:
         raise SystemExit(f"no light frames in {args.light}")
-    preprocess(session, args.output)
+    preprocess(session, args.output, reference=args.reference)
 
 
 def _preview(args: argparse.Namespace) -> None:
@@ -225,6 +225,11 @@ def main(argv: list[str] | None = None) -> None:
     for name in ("bias", "dark", "flat"):
         whole.add_argument(f"--{name}", type=Path, help=f"directory of {name} frames, if any")
     whole.add_argument("--light", type=Path, required=True, help="directory of light frames")
+    whole.add_argument(
+        "--reference",
+        type=Path,
+        help="calibrated frame to align the lights to (default: the first light)",
+    )
     whole.add_argument(
         "-o", "--output", type=Path, required=True, help="directory for masters and aligned lights"
     )

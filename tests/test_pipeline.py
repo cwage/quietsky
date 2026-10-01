@@ -116,3 +116,29 @@ def test_preprocess_works_without_some_calibration_frames(
         per_light = [line for line in reports if "dark scale " in line]
         assert len(per_light) == 4
         assert all("dark scale 1.000" in line for line in per_light)
+
+
+@pytest.mark.slow
+def test_reference_aligns_a_second_run_to_the_first(tmp_path: Path) -> None:
+    # Two runs over different lights, as for two filters of a mono camera.
+    calibration = (frames("bias"), frames("dark"), frames("flat"))
+    quiet: list[str] = []
+    first = preprocess(
+        Session(*calibration, frames("light")[:3]), tmp_path / "a", report=quiet.append
+    )
+    reference = sorted((tmp_path / "a" / "registered").glob("*_r.fits"))[0]
+    reports: list[str] = []
+
+    second = preprocess(
+        Session(*calibration, frames("light")[20:23]),
+        tmp_path / "b",
+        report=reports.append,
+        reference=reference,
+    )
+
+    assert any(line.startswith(f"aligning to {reference.name}") for line in reports)
+    assert not any("reference," in line for line in reports)
+    one, two = detect_stars(load(first).data), detect_stars(load(second).data)
+    separation = np.hypot(two.x[:, None] - one.x[None, :], two.y[:, None] - one.y[None, :]).min(1)
+    assert (separation < 1).sum() >= 25
+    assert np.median(separation[separation < 1]) < 0.3

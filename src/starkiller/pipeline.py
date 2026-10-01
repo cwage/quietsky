@@ -96,6 +96,7 @@ def preprocess(
     output: Path,
     load_frame: Callable[[Path], Frame] = load_normalized,
     report: Callable[[str], None] = print,
+    reference: Path | None = None,
 ) -> Path:
     """Preprocess a session and return the path of the master light.
 
@@ -103,6 +104,10 @@ def preprocess(
     master/light.png, and the aligned lights in registered/. Lights are
     aligned to the first one; a light whose stars cannot be matched to it is
     left out. Hot pixels are not corrected.
+
+    With reference, a frame that is already calibrated, every light is
+    aligned to that frame instead, so that the masters of several runs, such
+    as one per filter, line up.
 
     A session may lack bias, dark or flat frames; the corrections that
     cannot be made are skipped. Without bias frames the dark is subtracted
@@ -159,7 +164,10 @@ def preprocess(
 
     aligned: list[Float32] = []
     frames: list[Frame] = []
-    reference = None
+    reference_stars = None
+    if reference is not None:
+        reference_stars = detect_stars(load_normalized(reference).data)
+        report(f"aligning to {reference.name}, {len(reference_stars)} stars")
     for path in session.light:
         frame = load_frame(path)
         pattern = frame.header.get("BAYERPAT")
@@ -172,12 +180,12 @@ def preprocess(
         image = debayer_vng(image, pattern) if isinstance(pattern, str) else image[..., None]
         header |= noise_keywords(image)
         stars = detect_stars(image)
-        if reference is None:
-            reference = stars
+        if reference_stars is None:
+            reference_stars = stars
             report(f"{path.name}: reference, {len(stars)} stars, dark scale {dark_scale:.3f}")
         else:
             try:
-                transformation = solve_transformation(reference, stars)
+                transformation = solve_transformation(reference_stars, stars)
             except RegistrationError as error:
                 report(f"{path.name}: left out, {error}")
                 continue

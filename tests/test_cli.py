@@ -182,6 +182,13 @@ def test_background_writes_the_corrected_image_and_the_model(
     assert "kept" in capsys.readouterr().out
 
 
+def test_preprocess_needs_light_frames(tmp_path: Path) -> None:
+    (tmp_path / "light").mkdir()
+
+    with pytest.raises(SystemExit, match="no light frames"):
+        main(["preprocess", "--light", str(tmp_path / "light"), "-o", str(tmp_path / "out")])
+
+
 def test_preview_writes_a_stretched_png(tmp_path: Path) -> None:
     light = sorted((m13.DATA / "light").glob("*.fits"))[0]
     output = tmp_path / "light.png"
