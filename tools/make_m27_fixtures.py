@@ -1,12 +1,12 @@
 """Extract the reference for background extraction from the M27 PixInsight project.
 
-The project in $STARKILLER_DATA/2018-09-14/m27 records a
+The project in $QUIETSKY_DATA/2018-09-14/m27 records a
 DynamicBackgroundExtraction: its 74 samples in the project file, and the
 image before and after it in the project's data directory. This writes the
 samples and the background model PixInsight subtracted, thinned to every
 eighth pixel, to tests/data/m27.
 
-    docker compose run --rm starkiller python tools/make_m27_fixtures.py
+    docker compose run --rm quietsky python tools/make_m27_fixtures.py
 """
 
 import os
@@ -15,9 +15,9 @@ from pathlib import Path
 
 import numpy as np
 
-from starkiller.pixinsight_project import read_project_image
+from quietsky.pixinsight_project import read_project_image
 
-SESSION = Path(os.environ["STARKILLER_DATA"]) / "2018-09-14" / "m27"
+SESSION = Path(os.environ["QUIETSKY_DATA"]) / "2018-09-14" / "m27"
 OUTPUT = Path(__file__).parent.parent / "tests" / "data" / "m27"
 # The image DBE was applied to, and the result, among the project's images.
 BEFORE, AFTER = "ZZF3PSWZT-000001", "ZZF3PSWZT-000004"

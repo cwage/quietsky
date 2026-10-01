@@ -1,4 +1,4 @@
-# starkiller
+# quietsky
 
 Astronomical image calibration, stacking and processing from the command
 line: the PixInsight workflow without the GUI.
@@ -29,7 +29,7 @@ Open questions are tracked as issues in the repository.
 Everything runs in Docker. A whole session in one go:
 
     make build
-    docker compose run --rm starkiller starkiller preprocess --bias BIAS_DIR --dark DARK_DIR --flat FLAT_DIR --light LIGHT_DIR -o out/session
+    docker compose run --rm quietsky quietsky preprocess --bias BIAS_DIR --dark DARK_DIR --flat FLAT_DIR --light LIGHT_DIR -o out/session
 
 That writes the four master frames and a stretched preview of the master
 light to `out/session/master`, and the aligned lights to
@@ -43,11 +43,11 @@ so a master flat that is already calibrated is not calibrated again.
 For the M13 session in the archive, at the camera's full 14-bit depth (about
 20 minutes for its 103 frames):
 
-    docker compose run --rm starkiller starkiller preprocess --bias /data/2018-09-12/m13/offset --dark /data/2018-09-12/m13/dark --flat /data/2018-09-12/m13/flat --light /data/2018-09-12/m13/light -o out/m13
+    docker compose run --rm quietsky quietsky preprocess --bias /data/2018-09-12/m13/offset --dark /data/2018-09-12/m13/dark --flat /data/2018-09-12/m13/flat --light /data/2018-09-12/m13/light -o out/m13
 
 Then take the sky gradient out of the master light:
 
-    docker compose run --rm starkiller starkiller background out/session/master/light.fits -o out/session/master/light_bg.fits
+    docker compose run --rm quietsky quietsky background out/session/master/light.fits -o out/session/master/light_bg.fits
 
 That fits a spline through samples of the sky, which is right when most of
 the frame is sky. If the target fills the frame, add `--model plane`: the
@@ -58,18 +58,18 @@ set it off (the blue M81 master does), so this is yours to judge.
 
 The preprocessing steps are also available one at a time:
 
-    docker compose run --rm starkiller starkiller info FRAME...
-    docker compose run --rm starkiller starkiller stack BIAS... -o master_bias.fits
-    docker compose run --rm starkiller starkiller calibrate FLAT... --bias master_bias.fits --dark master_dark.fits -o flats/
-    docker compose run --rm starkiller starkiller stack --flat flats/*.fits -o master_flat.fits
-    docker compose run --rm starkiller starkiller calibrate LIGHT... --bias master_bias.fits --dark master_dark.fits --flat master_flat.fits -o lights/
-    docker compose run --rm starkiller starkiller debayer lights/*.fits -o rgb/
-    docker compose run --rm starkiller starkiller register rgb/*.fits --reference rgb/FIRST_d.fits -o registered/
-    docker compose run --rm starkiller starkiller stack --light registered/*.fits -o master_light.fits
-    docker compose run --rm starkiller starkiller preview master_light.fits -o master_light.png
+    docker compose run --rm quietsky quietsky info FRAME...
+    docker compose run --rm quietsky quietsky stack BIAS... -o master_bias.fits
+    docker compose run --rm quietsky quietsky calibrate FLAT... --bias master_bias.fits --dark master_dark.fits -o flats/
+    docker compose run --rm quietsky quietsky stack --flat flats/*.fits -o master_flat.fits
+    docker compose run --rm quietsky quietsky calibrate LIGHT... --bias master_bias.fits --dark master_dark.fits --flat master_flat.fits -o lights/
+    docker compose run --rm quietsky quietsky debayer lights/*.fits -o rgb/
+    docker compose run --rm quietsky quietsky register rgb/*.fits --reference rgb/FIRST_d.fits -o registered/
+    docker compose run --rm quietsky quietsky stack --light registered/*.fits -o master_light.fits
+    docker compose run --rm quietsky quietsky preview master_light.fits -o master_light.png
 
 The container sees the project at `/app` and the picture archive read-only at
-`/data` (`/mnt/nas/Pictures` unless `STARKILLER_DATA_DIR` says otherwise).
+`/data` (`/mnt/nas/Pictures` unless `QUIETSKY_DATA_DIR` says otherwise).
 
 ## Checks
 
@@ -130,8 +130,8 @@ ASI1600MM Pro at 430 mm, 16-megapixel FITS files from N.I.N.A., 20 lights of
 filter went through `preprocess` on its own, the colour filters with
 `--reference` set to the first registered luminance frame:
 
-    docker compose run --rm starkiller starkiller preprocess --dark D/DARK --flat D/FLAT/L --light D/LIGHT/L -o out/m81/L
-    docker compose run --rm starkiller starkiller preprocess --dark D/DARK --flat D/FLAT/R --light D/LIGHT/R --reference out/m81/L/registered/FIRST_r.fits -o out/m81/R
+    docker compose run --rm quietsky quietsky preprocess --dark D/DARK --flat D/FLAT/L --light D/LIGHT/L -o out/m81/L
+    docker compose run --rm quietsky quietsky preprocess --dark D/DARK --flat D/FLAT/R --light D/LIGHT/R --reference out/m81/L/registered/FIRST_r.fits -o out/m81/R
 
 All 80 lights registered, with about 1,950 stars matched per luminance
 frame at 0.38 px rms. The R, G and B masters sit within 0.01 px of the L
@@ -175,7 +175,7 @@ Things that had to be found out to get an exact match, and are easy to lose:
 - **Sigma collapse.** On quantised data the Winsorized sigma estimate can
   shrink without converging. PixInsight iterates until 32-bit rounding stops
   it, then either rejects every value off the median or none. This is why its
-  2018 run rejected 5% of all bias pixels. `starkiller.integrate` reaches the
+  2018 run rejected 5% of all bias pixels. `quietsky.integrate` reaches the
   same decisions directly; the comment there has the rule.
 - **Input order.** The per-frame entries in a master's history follow the
   order PixInsight integrated the files in, which for the flats is not the
@@ -237,7 +237,7 @@ Things that had to be found out to get an exact match, and are easy to lose:
   channel a count of blocks, each block being two 64-bit sizes (stored and
   original), a 16-byte digest and the data, zlib-compressed unless the sizes
   are equal, with the four bytes of each sample stored apart.
-  `starkiller.pixinsight_project` reads them. The file saved as
+  `quietsky.pixinsight_project` reads them. The file saved as
   `..._integration_DBE.xisf` in the M27 session is not the plain result of
   DBE; it has further processing applied.
 - **Background extraction.** DBE's sample value is the plain mean of its

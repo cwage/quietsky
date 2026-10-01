@@ -3,10 +3,10 @@ import pytest
 
 import m13
 import synthetic
-from starkiller.register import solve_transformation
-from starkiller.resample import interpolate, resample
-from starkiller.stars import detect_stars
-from starkiller.xisf import read_xisf
+from quietsky.register import solve_transformation
+from quietsky.resample import interpolate, resample
+from quietsky.stars import detect_stars
+from quietsky.xisf import read_xisf
 
 IDENTITY = np.eye(3)
 

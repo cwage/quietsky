@@ -1,6 +1,6 @@
 import numpy as np
 
-from starkiller.integrate import (
+from quietsky.integrate import (
     flux_normalization,
     frame_estimates,
     integrate,

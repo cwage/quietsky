@@ -10,7 +10,7 @@ import numpy.typing as npt
 import rawpy
 from astropy.io import fits
 
-from starkiller.xisf import read_xisf
+from quietsky.xisf import read_xisf
 
 HeaderValue = str | int | float | bool
 

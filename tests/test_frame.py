@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from starkiller.frame import DiskStack, Frame, load, load_header, normalized, save_fits
+from quietsky.frame import DiskStack, Frame, load, load_header, normalized, save_fits
 
 
 def test_fits_round_trip_keeps_integer_mosaic_and_header(tmp_path: Path) -> None:

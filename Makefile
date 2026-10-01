@@ -2,7 +2,7 @@
 export UID := $(shell id -u)
 export GID := $(shell id -g)
 
-RUN = docker compose run --rm starkiller
+RUN = docker compose run --rm quietsky
 
 .PHONY: build test test-all lint typecheck check fixtures shell
 

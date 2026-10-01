@@ -10,8 +10,8 @@ master flat.
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.estimators import mad
-from starkiller.noise import k_sigma_noise
+from quietsky.estimators import mad
+from quietsky.noise import k_sigma_noise
 
 Float32 = npt.NDArray[np.float32]
 

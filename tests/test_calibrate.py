@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 import m13
-from starkiller.calibrate import calibrate, optimization_dark, optimize_dark, unit_flat
-from starkiller.frame import load_raw
-from starkiller.xisf import read_xisf
+from quietsky.calibrate import calibrate, optimization_dark, optimize_dark, unit_flat
+from quietsky.frame import load_raw
+from quietsky.xisf import read_xisf
 
 # PixInsight logs the dark scaling factor to three decimals, so its output
 # can differ from ours by that much of the dark, plus float32 rounding.

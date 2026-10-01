@@ -1,10 +1,10 @@
 """Preprocess the full M13 session as PixInsight loaded it and compare master lights.
 
-Runs the whole pipeline on the raw frames in $STARKILLER_DATA, with the raw
+Runs the whole pipeline on the raw frames in $QUIETSKY_DATA, with the raw
 values truncated the way PixInsight 1.8.5 read them, and reports how the
 master light differs from PixInsight's. Takes roughly twenty minutes.
 
-    docker compose run --rm starkiller python tools/compare_m13_end_to_end.py out/m13_legacy
+    docker compose run --rm quietsky python tools/compare_m13_end_to_end.py out/m13_legacy
 """
 
 import os
@@ -14,11 +14,11 @@ from pathlib import Path
 
 import numpy as np
 
-from starkiller.frame import Frame, load, load_raw
-from starkiller.pipeline import Session, preprocess
-from starkiller.xisf import read_xisf
+from quietsky.frame import Frame, load, load_raw
+from quietsky.pipeline import Session, preprocess
+from quietsky.xisf import read_xisf
 
-SESSION = Path(os.environ["STARKILLER_DATA"]) / "2018-09-12" / "m13"
+SESSION = Path(os.environ["QUIETSKY_DATA"]) / "2018-09-12" / "m13"
 # Every light covers this part of the frame; nearer the edge some are black.
 INNER = (slice(150, -150), slice(150, -150))
 

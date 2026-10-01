@@ -5,8 +5,8 @@ import pytest
 
 import m13
 import synthetic
-from starkiller.background import extract_background, fit_surface, sample_background
-from starkiller.pixinsight_project import read_project_image
+from quietsky.background import extract_background, fit_surface, sample_background
+from quietsky.pixinsight_project import read_project_image
 
 M27 = Path(__file__).parent / "data" / "m27" / "dbe.npz"
 M27_PROJECT = m13.SESSION.parent.parent / "2018-09-14" / "m27" / "m27.data"

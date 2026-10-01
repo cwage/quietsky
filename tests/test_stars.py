@@ -3,8 +3,8 @@ import pytest
 
 import m13
 import synthetic
-from starkiller.stars import detect_stars
-from starkiller.xisf import read_xisf
+from quietsky.stars import detect_stars
+from quietsky.xisf import read_xisf
 
 
 def nearest(x: np.ndarray, y: np.ndarray, to_x: np.ndarray, to_y: np.ndarray) -> np.ndarray:

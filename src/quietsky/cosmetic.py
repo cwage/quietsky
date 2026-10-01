@@ -13,7 +13,7 @@ works from the master dark instead, which is PixInsight's other mode.
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.estimators import mad
+from quietsky.estimators import mad
 
 Float32 = npt.NDArray[np.float32]
 Bool = npt.NDArray[np.bool_]

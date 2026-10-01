@@ -14,11 +14,11 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from starkiller.frame import load_fits
+from quietsky.frame import load_fits
 
 DATA = Path(__file__).parent / "data" / "m13"
 # The full session, for the tests marked "nas".
-SESSION = Path(os.environ.get("STARKILLER_DATA", "/data")) / "2018-09-12" / "m13"
+SESSION = Path(os.environ.get("QUIETSKY_DATA", "/data")) / "2018-09-12" / "m13"
 
 
 def as_pixinsight_loaded(data: npt.NDArray[np.uint16]) -> npt.NDArray[np.float32]:

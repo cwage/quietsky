@@ -16,4 +16,4 @@ RUN uv sync --frozen --no-install-project
 COPY src ./src
 RUN uv sync --frozen
 
-CMD ["starkiller", "--help"]
+CMD ["quietsky", "--help"]
