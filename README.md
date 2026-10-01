@@ -13,7 +13,8 @@ line: the PixInsight workflow without the GUI.
 | Location, scale and noise estimators | done, match PixInsight's recorded values |
 | Calibrate with master bias, scaled master dark and master flat | done; arithmetic matches, the automatic dark scale is about 6% above PixInsight's |
 | Auto-stretched previews | done |
-| Cosmetic correction, debayer, registration, light integration | not started |
+| Cosmetic correction | partly: PixInsight's replacement value is matched; hot pixels are found from the master dark, not by PixInsight's automatic rule |
+| Debayer, registration, light integration | not started |
 
 The remaining steps are tracked as issues in the repository.
 
@@ -89,3 +90,13 @@ Things that had to be found out to get an exact match, and are easy to lose:
   without it about one pixel in a million is rejected differently.
 - **Flat division.** PixInsight divides by the master flat scaled to a mean
   of one, the mean being taken over the whole mosaic, not per colour.
+- **Cosmetic correction.** The 2018 run used CosmeticCorrection's automatic
+  detection, which changed only 20 to 60 pixels per light. A corrected hot
+  pixel becomes the mean of its eight same-colour neighbours two pixels
+  away, hot neighbours included; that much we reproduce exactly. Every
+  corrected hot pixel exceeds the median of those neighbours by at least 3
+  times the image's average absolute deviation, but so do some 10,000 other
+  pixels per frame that PixInsight left alone, and no rule built from the
+  5x5 neighbourhood or from the calibration masters tells the two groups
+  apart. The few pixels it raised, beside saturated stars, follow no
+  replacement rule we could find either.
