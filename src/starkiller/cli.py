@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from starkiller.background import extract_background
 from starkiller.calibrate import calibrate, optimize_dark, unit_flat
 from starkiller.debayer import BAYER_PATTERNS, debayer_vng
 from starkiller.frame import FITS_SUFFIXES, RAW_SUFFIXES, Frame, load, normalized, save_fits
@@ -109,6 +110,20 @@ def _register(args: argparse.Namespace) -> None:
         raise SystemExit(f"{failed} frame(s) could not be registered")
 
 
+def _background(args: argparse.Namespace) -> None:
+    frame = load(args.file)
+    corrected, model, samples = extract_background(
+        normalized(frame.data), args.samples_per_row, smoothing=args.smoothing
+    )
+    save_fits(args.output, Frame(corrected, frame.header))
+    print(f"{len(samples.x)} samples, {int(samples.kept.sum())} kept")
+    print(f"background varied by {float(np.ptp(model)):.3g} across the frame")
+    print(f"wrote {args.output}")
+    if args.model:
+        save_fits(args.model, Frame(model))
+        print(f"wrote {args.model}")
+
+
 def _frames_in(directory: Path) -> list[Path]:
     suffixes = RAW_SUFFIXES | FITS_SUFFIXES | {".xisf"}
     return sorted(path for path in directory.iterdir() if path.suffix.lower() in suffixes)
@@ -207,6 +222,20 @@ def main(argv: list[str] | None = None) -> None:
         "-o", "--output", type=Path, required=True, help="directory for masters and aligned lights"
     )
     whole.set_defaults(run=_preprocess)
+
+    background = commands.add_parser(
+        "background", help="subtract the sky background gradient from a linear image"
+    )
+    background.add_argument("file", type=Path)
+    background.add_argument("-o", "--output", type=Path, required=True, help="FITS file to write")
+    background.add_argument("--model", type=Path, help="also write the background model here")
+    background.add_argument(
+        "--samples-per-row", type=int, default=16, help="background samples across the frame"
+    )
+    background.add_argument(
+        "--smoothing", type=float, default=0.25, help="how loosely the model follows the samples"
+    )
+    background.set_defaults(run=_background)
 
     preview = commands.add_parser("preview", help="write an auto-stretched PNG of a frame")
     preview.add_argument("file", type=Path)
