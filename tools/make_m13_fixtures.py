@@ -65,6 +65,20 @@ def integration_inputs(log: str, kind: str) -> list[str]:
     return [Path(path).name for path in [first.group(1), *rest]]
 
 
+def debayer_noise(log: str) -> dict[str, list[list[float]]]:
+    """Noise PixInsight measured in each debayered light.
+
+    Maps the debayered file name to a (sigma, fraction of pixels) pair per
+    colour channel.
+    """
+    section = log.split("* Begin demosaicing of light frames")[1].split("* End demosaicing")[0]
+    channel = r"s\d = (\S+), n\d = (\S+) \(MRS\)\n.*?"
+    blocks = re.findall(channel * 3 + r"Writing output file: \S*/(\S+)", section, re.DOTALL)
+    return {
+        block[6]: [[float(block[i]), float(block[i + 1])] for i in (0, 2, 4)] for block in blocks
+    }
+
+
 def crop_masters() -> None:
     (OUTPUT / "reference").mkdir(parents=True, exist_ok=True)
     log = next((SESSION / "output" / "logs").glob("*.log")).read_text()
@@ -82,6 +96,9 @@ def crop_masters() -> None:
         record = {"inputs": integration_inputs(log, kind), "history": history}
         (OUTPUT / "reference" / f"master_{kind}.json").write_text(json.dumps(record, indent=1))
         print(f"master {kind}")
+    noise = debayer_noise(log)
+    (OUTPUT / "reference" / "debayer_noise.json").write_text(json.dumps(noise, indent=1))
+    print(f"debayer noise: {len(noise)} frames")
 
 
 if __name__ == "__main__":
