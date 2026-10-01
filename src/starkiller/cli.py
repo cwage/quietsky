@@ -155,7 +155,13 @@ def _frames_in(directory: Path | None) -> list[Path]:
 
 def _preprocess(args: argparse.Namespace) -> None:
     session = Session(
-        _frames_in(args.bias), _frames_in(args.dark), _frames_in(args.flat), _frames_in(args.light)
+        _frames_in(args.bias),
+        _frames_in(args.dark),
+        _frames_in(args.flat),
+        _frames_in(args.light),
+        master_bias=args.master_bias,
+        master_dark=args.master_dark,
+        master_flat=args.master_flat,
     )
     if not session.light:
         raise SystemExit(f"no light frames in {args.light}")
@@ -244,6 +250,12 @@ def main(argv: list[str] | None = None) -> None:
     for name in ("bias", "dark", "flat"):
         whole.add_argument(f"--{name}", type=Path, help=f"directory of {name} frames, if any")
     whole.add_argument("--light", type=Path, required=True, help="directory of light frames")
+    for name in ("bias", "dark", "flat"):
+        whole.add_argument(
+            f"--master-{name}",
+            type=Path,
+            help=f"a master {name} made elsewhere, used as it is instead of --{name}",
+        )
     whole.add_argument(
         "--reference",
         type=Path,

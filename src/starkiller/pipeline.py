@@ -34,12 +34,19 @@ Float32 = npt.NDArray[np.float32]
 
 @dataclass(frozen=True)
 class Session:
-    """The frames of one session, by kind."""
+    """The frames of one session, by kind.
+
+    A master made elsewhere can stand in for a kind's frames: it is used as
+    it is, so a master flat is not calibrated again.
+    """
 
     bias: Sequence[Path]
     dark: Sequence[Path]
     flat: Sequence[Path]
     light: Sequence[Path]
+    master_bias: Path | None = None
+    master_dark: Path | None = None
+    master_flat: Path | None = None
 
 
 def load_normalized(path: Path) -> Frame:
@@ -85,6 +92,14 @@ def _exposure(frames: Sequence[Frame]) -> float | None:
     return float(exposure) if isinstance(exposure, int | float) else None
 
 
+def _given_master(source: Path, path: Path, report: Callable[[str], None]) -> Float32:
+    """Load a master made elsewhere and keep a copy with the run's own masters."""
+    frame = load_normalized(source)
+    save_fits(path, frame)
+    report(f"master {path.stem} from {source.name}")
+    return frame.data
+
+
 def _master(frames: Sequence[Frame], path: Path) -> Float32:
     """Integrate frames as they are into a master and save it."""
     image = integrate(np.stack([frame.data for frame in frames])).image
@@ -120,17 +135,24 @@ def preprocess(
     registered.mkdir(exist_ok=True)
 
     bias = dark = flat_unit = None
-    if session.bias:
+    if session.master_bias is not None:
+        bias = _given_master(session.master_bias, master / "bias.fits", report)
+    elif session.bias:
         bias = _master([load_frame(path) for path in session.bias], master / "bias.fits")
         report(f"master bias from {len(session.bias)} frames")
     darks = [load_frame(path) for path in session.dark]
-    if darks:
+    if session.master_dark is not None:
+        dark = _given_master(session.master_dark, master / "dark.fits", report)
+        darks = [Frame(dark, load(session.master_dark).header)]
+    elif darks:
         dark = _master(darks, master / "dark.fits")
         report(f"master dark from {len(darks)} frames")
     # The dark can only be scaled once the bias is out of it.
     scalable = bias is not None and dark is not None
 
-    if session.flat:
+    if session.master_flat is not None:
+        flat_unit = unit_flat(_given_master(session.master_flat, master / "flat.fits", report))
+    elif session.flat:
         flats = [load_frame(path) for path in session.flat]
         # A flat's exposure is too short for the dark scale to be found from
         # its noise. With a bias the dark is scaled by exposure time, or left
