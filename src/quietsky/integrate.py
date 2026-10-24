@@ -32,7 +32,8 @@ WINSOR_MAX_ITERATIONS = 10_000
 # How many values, frames times pixels, one thread works on at a time, and
 # how many are read from the stack in one go. Together they bound memory.
 CHUNK_VALUES = 2_000_000
-BAND_VALUES = 128_000_000
+# QUIETSKY_BAND_VALUES raises the band size: fewer, longer reads, for a spinning disk.
+BAND_VALUES = int(os.environ.get("QUIETSKY_BAND_VALUES", 128_000_000))
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,9 @@ def integrate(
 # Pixels at or beyond these limits are black registration borders or
 # saturated, and are left out when lights are combined.
 LIGHT_RANGE = (0.0, 0.98)
+# A light with more of its area than this black after registration has its
+# level and scale estimated from the rest of it only.
+MAX_BORDER = 0.1
 
 
 def integrate_lights(
@@ -332,7 +336,18 @@ def integrate_lights(
     """
     results = []
     for channel, frames in enumerate(channels):
-        normalization = level_and_scale_normalization(*frame_estimates(frames))
+        locations, scales = frame_estimates(frames)
+        for index in range(len(frames)):
+            # PixInsight estimates over the whole frame, black borders
+            # included, which is harmless while the borders are thin. A frame
+            # turned far from the reference, as on an alt-azimuth mount over a
+            # long night, can be mostly border; its estimate then describes
+            # the border, down to a scale of zero, so the sky is used instead.
+            frame = frames[index]
+            covered = frame[frame > LIGHT_RANGE[0]]
+            if covered.size < (1 - MAX_BORDER) * frame.size:
+                locations[index], scales[index] = ikss(covered)
+        normalization = level_and_scale_normalization(locations, scales)
         weights = noise_weights(noise[:, channel], normalization)
         results.append(
             integrate(

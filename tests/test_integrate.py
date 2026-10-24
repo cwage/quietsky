@@ -4,6 +4,7 @@ from quietsky.integrate import (
     flux_normalization,
     frame_estimates,
     integrate,
+    integrate_lights,
     level_and_scale_normalization,
     noise_weights,
     winsorized_sigma_clip,
@@ -200,3 +201,17 @@ def test_weights_set_each_frames_share_of_the_average() -> None:
     result = integrate(stack, weights=np.array([3.0, 1.0]))
 
     np.testing.assert_allclose(result.image, 0.175, rtol=1e-6)
+
+
+def test_lights_that_are_mostly_border_are_normalised_from_their_sky() -> None:
+    rng = np.random.default_rng(3)
+    sky, noise = 0.1, 0.01
+    frames = rng.normal(sky, noise, (8, 60, 80)).astype(np.float32)
+    # Two frames turned far from the reference: most of each is black border.
+    frames[6, :, :50] = 0
+    frames[7, :45, :] = 0
+
+    result = integrate_lights([frames], np.full((8, 1), noise))[0]
+
+    assert np.isfinite(result.image).all()
+    assert abs(float(result.image.mean()) - sky) < 0.002
