@@ -128,6 +128,10 @@ def preprocess(
     A session may lack bias, dark or flat frames; the corrections that
     cannot be made are skipped. Without bias frames the dark is subtracted
     unscaled, from the flats too.
+
+    Lights already in registered/ from an earlier run into the same output,
+    such as one that was interrupted, are used as they are, so a long run can
+    be picked up where it stopped.
     """
     master = output / "master"
     registered = output / "registered"
@@ -193,6 +197,20 @@ def preprocess(
         reference_stars = detect_stars(load_normalized(reference).data)
         report(f"aligning to {reference.name}, {len(reference_stars)} stars")
     for path in session.light:
+        done = registered / f"{path.stem}_r.fits"
+        if done.exists():
+            # Registered by an earlier run that was interrupted: used as it is.
+            previous = load(done)
+            data = previous.data if previous.data.ndim == 3 else previous.data[..., None]
+            if reference_stars is None:
+                reference_stars = detect_stars(data)
+                report(f"{path.name}: reference, from an earlier run")
+            else:
+                report(f"{path.name}: registered by an earlier run")
+            written.append(done)
+            headers.append(previous.header)
+            channel_count = data.shape[-1]
+            continue
         frame = load_frame(path)
         pattern = frame.header.get("BAYERPAT")
         dark_scale = 1.0
@@ -218,8 +236,12 @@ def preprocess(
                 f"{path.name}: {transformation.pairs} stars matched, "
                 f"rms {transformation.rms:.2f} px, dark scale {dark_scale:.3f}"
             )
-        written.append(registered / f"{path.stem}_r.fits")
-        save_fits(written[-1], Frame(np.squeeze(image), header))
+        # Written under another name and renamed when complete, so a run that
+        # stops part way never leaves a half-written frame to be resumed from.
+        partial = done.with_name(done.name + ".part")
+        save_fits(partial, Frame(np.squeeze(image), header))
+        partial.replace(done)
+        written.append(done)
         headers.append(header)
         channel_count = image.shape[-1]
 
