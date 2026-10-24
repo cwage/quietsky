@@ -175,3 +175,20 @@ def test_masters_made_elsewhere_are_used_as_they_are(tmp_path: Path) -> None:
     np.testing.assert_array_equal(
         load(tmp_path / "b" / "master" / "flat.fits").data, load(masters / "flat.fits").data
     )
+
+
+def test_an_interrupted_run_is_resumed(tmp_path: Path) -> None:
+    session = Session([], [], [], frames("light")[:4])
+    whole = preprocess(session, tmp_path / "whole", report=lambda line: None)
+    # A run that stopped after registering two lights, mid-way through a third.
+    shutil.copytree(tmp_path / "whole", tmp_path / "resumed")
+    registered = sorted((tmp_path / "resumed" / "registered").glob("*_r.fits"))
+    for path in registered[2:]:
+        path.unlink()
+    (registered[2].parent / (registered[2].name + ".part")).write_bytes(b"half a frame")
+    reports: list[str] = []
+
+    resumed = preprocess(session, tmp_path / "resumed", report=reports.append)
+
+    assert sum("earlier run" in line for line in reports) == 2
+    np.testing.assert_allclose(load(resumed).data, load(whole).data, rtol=1e-5, atol=1e-7)

@@ -519,6 +519,15 @@ def _vng_phase(
     return result
 
 
+def debayer_bilinear(mosaic: npt.NDArray[np.floating], pattern: str = "RGGB") -> Float32:
+    """Demosaic by averaging neighbours: soft, but fast, for colour that is
+    later smoothed anyway."""
+    result: Float32 = bilinear(mosaic.astype(np.float64), _colour_lookup(pattern)).astype(
+        np.float32
+    )
+    return result
+
+
 def debayer_vng(mosaic: npt.NDArray[np.floating], pattern: str = "RGGB") -> Float32:
     """Demosaic a Bayer mosaic of shape (H, W) into an (H, W, 3) RGB image.
 

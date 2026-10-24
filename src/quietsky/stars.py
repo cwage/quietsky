@@ -44,7 +44,7 @@ class Stars:
         return len(self.x)
 
 
-def _windows(
+def windows(
     image: Float32, rows: npt.NDArray[np.intp], columns: npt.NDArray[np.intp], half: int
 ) -> Float32:
     """The square of pixels around each (row, column), as an (N, size, size) array."""
@@ -84,12 +84,12 @@ def detect_stars(image: npt.NDArray[np.floating], threshold: float = 5.0) -> Sta
     rows, columns = rows + MARGIN, columns + MARGIN
 
     # Hot pixels are single-pixel spikes before filtering.
-    core = np.clip(_windows(detail, rows, columns, 1), 0, None)
+    core = np.clip(windows(detail, rows, columns, 1), 0, None)
     share = core[:, 1, 1] / core.sum(axis=(1, 2))
     rows, columns = rows[share <= MAX_PEAK_SHARE], columns[share <= MAX_PEAK_SHARE]
 
     # Position: centre of light of the filtered image around the peak.
-    light = np.clip(_windows(filtered, rows, columns, WINDOW), 0, None).astype(np.float64)
+    light = np.clip(windows(filtered, rows, columns, WINDOW), 0, None).astype(np.float64)
     flux = light.sum(axis=(1, 2))
     offsets = np.arange(-WINDOW, WINDOW + 1)
     x = columns + (light.sum(axis=1) * offsets).sum(axis=1) / flux

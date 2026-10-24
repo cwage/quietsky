@@ -84,14 +84,16 @@ def resample(
     matrix: Float64,
     clamping: float | None = CLAMPING_THRESHOLD,
     workers: int | None = None,
+    shape: tuple[int, int] | None = None,
 ) -> Float32:
     """Redraw image so that output pixel (x, y) shows the input at matrix @ (x, y, 1).
 
     matrix is the projective transformation from the output (reference)
-    geometry to the input frame, as solve_transformation gives it.
+    geometry to the input frame, as solve_transformation gives it. The output
+    has the size of the input unless shape gives another (height, width).
     """
-    height, width = image.shape[:2]
-    result = np.empty(image.shape, np.float32)
+    height, width = shape or image.shape[:2]
+    result = np.empty((height, width, *image.shape[2:]), np.float32)
     columns = np.arange(width, dtype=np.float64)
 
     def rows_from(top: int) -> None:
