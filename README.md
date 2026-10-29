@@ -78,6 +78,15 @@ to its own kind. It leaves a finer, more even grain than the wavelet
 shrink and is the better-looking of the two; `--strength` and
 `--chroma-strength` set the width of the weighting in noise deviations.
 
+GraXpert's AI denoise can be run beside quietsky on the same master, from
+its own image with the model version pinned and downloaded at build time:
+
+    docker compose build graxpert
+    docker compose run --rm graxpert out/session/master/light_bg.fits out/session/master/light_gx.fits --strength 0.5
+
+It takes a minute or two per master on the CPU. The image, the wrapper
+and the model version are in `docker/graxpert/`.
+
 To judge denoised versions against each other, and against a deeper stack
 of the same field as the nearest thing to the truth:
 

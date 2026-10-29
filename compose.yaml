@@ -1,3 +1,12 @@
+# The project at /app and the frames read-only at /data, for every service.
+x-mounts: &mounts
+  - .:/app
+  # Source frames and PixInsight reference output, never written to.
+  - "${QUIETSKY_DATA_DIR:-./data}:/data:ro"
+  # The same frames are inside the project mount above when data is a
+  # directory of the checkout; keep that path read-only too.
+  - "${QUIETSKY_DATA_DIR:-./data}:/app/data:ro"
+
 services:
   quietsky:
     build: .
@@ -8,10 +17,15 @@ services:
       # Other sessions the inventory tests check, when they are available.
       QUIETSKY_MONO_SESSION:
       QUIETSKY_MOANA_SESSION:
-    volumes:
-      - .:/app
-      # Source frames and PixInsight reference output, never written to.
-      - "${QUIETSKY_DATA_DIR:-./data}:/data:ro"
-      # The same frames are inside the project mount above when data is a
-      # directory of the checkout; keep that path read-only too.
-      - "${QUIETSKY_DATA_DIR:-./data}:/app/data:ro"
+    volumes: *mounts
+
+  # GraXpert's AI denoise, run beside quietsky on a linear master:
+  #     docker compose run --rm graxpert IN.fits OUT.fits --strength 0.5
+  graxpert:
+    build: docker/graxpert
+    image: quietsky-graxpert:dev
+    working_dir: /app
+    volumes: *mounts
+    # The model is in the image; a run has no reason to reach the network,
+    # and this makes sure it cannot.
+    network_mode: none
