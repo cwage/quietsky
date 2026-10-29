@@ -36,6 +36,7 @@ from quietsky.integrate import (
     integrate,
     integrate_lights,
 )
+from quietsky.inventory import describe, take_inventory
 from quietsky.lunar import (
     align_channels,
     alignment_matrix,
@@ -171,6 +172,10 @@ def _background(args: argparse.Namespace) -> None:
     if args.write_model:
         save_fits(args.write_model, Frame(model))
         print(f"wrote {args.write_model}")
+
+
+def _inventory(args: argparse.Namespace) -> None:
+    print(describe(take_inventory(args.directory), args.directory, frames=args.frames))
 
 
 def _frames_in(directory: Path | None) -> list[Path]:
@@ -525,6 +530,15 @@ def main(argv: list[str] | None = None) -> None:
         "-o", "--output", type=Path, required=True, help="directory for masters and aligned lights"
     )
     whole.set_defaults(run=_preprocess)
+
+    inventory = commands.add_parser(
+        "inventory", help="sort the frames under a directory into groups by kind and filter"
+    )
+    inventory.add_argument("directory", type=Path)
+    inventory.add_argument(
+        "--frames", action="store_true", help="list every frame and how it was classified"
+    )
+    inventory.set_defaults(run=_inventory)
 
     background = commands.add_parser(
         "background", help="subtract the sky background gradient from a linear image"
