@@ -34,9 +34,11 @@ class Noise:
     fraction: float
 
 
-def _k_sigma(values: npt.NDArray[np.float32], tolerance: float = 0.01, passes: int = 10) -> float:
+def k_sigma(values: npt.NDArray[np.float32], tolerance: float = 0.01, passes: int = 10) -> float:
     """Standard deviation with values beyond three deviations clipped out."""
     sigma = float(values.std(dtype=np.float64, ddof=1))
+    if sigma == 0:
+        return sigma
     for _ in range(passes):
         clipped = float(values[np.abs(values) < SIGNIFICANCE * sigma].std(dtype=np.float64, ddof=1))
         if abs(sigma - clipped) / sigma < tolerance:
@@ -51,7 +53,7 @@ def noise_mrs(image: npt.NDArray[np.floating], layer_count: int = 4) -> Noise:
     in_range = (image > RANGE[0]) & (image < RANGE[1])
     detail = image - residual
 
-    sigma = _k_sigma(layers[0][in_range]) / B3_NOISE_PER_LAYER[0]
+    sigma = k_sigma(layers[0][in_range]) / B3_NOISE_PER_LAYER[0]
     count = 0
     # On small or crowded images the estimate can cycle without settling.
     for _ in range(MRS_MAX_ITERATIONS):
@@ -83,4 +85,4 @@ def evaluate_noise(image: npt.NDArray[np.floating]) -> Noise:
 def k_sigma_noise(image: npt.NDArray[np.floating]) -> float:
     """Quick noise estimate: the clipped spread of the finest wavelet layer."""
     layers, _ = b3_layers(image, 1)
-    return _k_sigma(layers[0]) / B3_NOISE_PER_LAYER[0]
+    return k_sigma(layers[0]) / B3_NOISE_PER_LAYER[0]

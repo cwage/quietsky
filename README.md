@@ -56,6 +56,21 @@ samples look like more than sky, but it cannot tell a featureless glow from
 a gradient, and a strong gradient with a slightly non-quadratic shape can
 set it off (the blue M81 master does), so this is yours to judge.
 
+Then hide the noise, while the data is still linear and before any stretch:
+
+    docker compose run --rm quietsky quietsky denoise out/session/master/light_bg.fits -o out/session/master/light_dn.fits
+
+The noise of each wavelet layer is measured from the image itself (in a
+registered stack it is spread across neighbouring pixels, so the finest
+layer holds less of it than white noise would and the coarser layers
+more), and each layer is shrunk towards zero where it is within that
+noise. A mask built from the stretched luminance and the detected stars
+spares bright nebula and every star; the colour is smoothed harder than
+the brightness, as the eye forgives smooth colour. `--threshold` and
+`--chroma-threshold` set the strength per layer, `--amount` keeps some
+of the grain, `--mask` takes your own mask, and `--residual` writes what
+was taken out, which should look like grain and nothing else.
+
 To see what a folder holds before any of that, when a session arrives as
 one tree with everything mixed:
 
@@ -79,6 +94,7 @@ The preprocessing steps are also available one at a time:
     docker compose run --rm quietsky quietsky register rgb/*.fits --reference rgb/FIRST_d.fits -o registered/
     docker compose run --rm quietsky quietsky stack --light registered/*.fits -o master_light.fits
     docker compose run --rm quietsky quietsky preview master_light.fits -o master_light.png
+    docker compose run --rm quietsky quietsky denoise master_light_bg.fits -o master_light_dn.fits --residual residual.fits
 
 The container sees the project at `/app` and your frames read-only at
 `/data`. That is the `data` directory of the checkout unless
