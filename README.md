@@ -78,6 +78,16 @@ to its own kind. It leaves a finer, more even grain than the wavelet
 shrink and is the better-looking of the two; `--strength` and
 `--chroma-strength` set the width of the weighting in noise deviations.
 
+To judge denoised versions against each other, and against a deeper stack
+of the same field as the nearest thing to the truth:
+
+    docker compose run --rm quietsky python tools/evaluate_denoise.py light_bg.fits wavelet=light_dn.fits nlm=light_nlm.fits --deeper deeper/light_bg.fits --crop core=130,420,240,200 -o out/evaluate
+
+It writes a page with the noise by scale, the star width and faint-star
+count, residuals and 1:1 crops of each version, and, with `--deeper`, each
+version's error against the deeper stack: the original's error is its
+noise, a perfect denoise's would be zero.
+
 To see what a folder holds before any of that, when a session arrives as
 one tree with everything mixed:
 
