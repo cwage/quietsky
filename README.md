@@ -100,6 +100,9 @@ The container sees the project at `/app` and your frames read-only at
 `/data`. That is the `data` directory of the checkout unless
 `QUIETSKY_DATA_DIR` names another; `data` is ignored by git and may be a
 symbolic link to wherever your pictures live.
+Commands in the container run as whoever owns the checkout, so the files
+they write are yours whether Docker is rooted or rootless; the entrypoint
+in `docker/` does that.
 
 ## Checks
 
