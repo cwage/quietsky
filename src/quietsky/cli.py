@@ -20,6 +20,11 @@ from quietsky.deconvolve import (
     measure_psf,
     richardson_lucy,
 )
+from quietsky.denoise import (
+    CHROMA_THRESHOLDS,
+    LUMINANCE_THRESHOLDS,
+    denoise_image,
+)
 from quietsky.frame import (
     FITS_SUFFIXES,
     RAW_SUFFIXES,
@@ -433,6 +438,31 @@ def _sharpen(args: argparse.Namespace) -> None:
         print(f"wrote {args.png}")
 
 
+def _denoise(args: argparse.Namespace) -> None:
+    frame = load(args.file)
+    data = normalized(frame.data)
+    mask = normalized(load(args.mask).data) if args.mask else None
+    cleaned, used_mask, components = denoise_image(
+        data, tuple(args.threshold), tuple(args.chroma_threshold), mask, args.sky, args.amount
+    )
+    for component in components:
+        before = ", ".join(f"{sigma:.3g}" for sigma in component.before)
+        after = ", ".join(f"{sigma:.3g}" for sigma in component.after)
+        print(f"{component.name}: noise by layer {before} -> {after}")
+    save_fits(args.output, Frame(cleaned, frame.header))
+    print(f"wrote {args.output}")
+    if args.mask_output:
+        save_fits(args.mask_output, Frame(used_mask))
+        print(f"wrote {args.mask_output}")
+    if args.residual:
+        save_fits(args.residual, Frame((data - cleaned).astype(np.float32), frame.header))
+        print(f"wrote {args.residual}")
+    if args.png:
+        stretched = autostretch(cleaned)
+        Image.fromarray((stretched * 255 + 0.5).astype(np.uint8)).save(args.png)
+        print(f"wrote {args.png}")
+
+
 def _preview(args: argparse.Namespace) -> None:
     stretched = autostretch(normalized(load(args.file).data))
     Image.fromarray((stretched * 255 + 0.5).astype(np.uint8)).save(args.output)
@@ -625,6 +655,56 @@ def main(argv: list[str] | None = None) -> None:
     preview.add_argument("file", type=Path)
     preview.add_argument("-o", "--output", type=Path, required=True, help="PNG file to write")
     preview.set_defaults(run=_preview)
+
+    def floats(text: str) -> list[float]:
+        return [float(value) for value in text.split(",")]
+
+    denoise_cmd = commands.add_parser(
+        "denoise",
+        help="hide the noise of a linear master before it is stretched: shrink the wavelet "
+        "layers within the noise, under a mask that spares bright signal, colour harder "
+        "than brightness",
+    )
+    denoise_cmd.add_argument(
+        "file", type=Path, help="a background-subtracted master, mono or colour"
+    )
+    denoise_cmd.add_argument("-o", "--output", type=Path, required=True, help="FITS to write")
+    denoise_cmd.add_argument(
+        "--threshold",
+        type=floats,
+        default=list(LUMINANCE_THRESHOLDS),
+        help="luminance thresholds in noise deviations, one per wavelet layer, finest first "
+        f"(default {','.join(f'{t:g}' for t in LUMINANCE_THRESHOLDS)}); 0 for none",
+    )
+    denoise_cmd.add_argument(
+        "--chroma-threshold",
+        type=floats,
+        default=list(CHROMA_THRESHOLDS),
+        help="the same for the colour, each channel less the luminance "
+        f"(default {','.join(f'{t:g}' for t in CHROMA_THRESHOLDS)})",
+    )
+    denoise_cmd.add_argument(
+        "--mask",
+        type=Path,
+        help="FITS mask: 1 where the luminance is denoised, 0 where it is kept (default: "
+        "built from the smoothed, stretched, inverted luminance)",
+    )
+    denoise_cmd.add_argument(
+        "--sky",
+        type=lambda text: tuple(int(value) for value in text.split(",")),
+        help="X,Y,W,H of a patch of empty sky to measure the noise in (default: the pixels "
+        "within the noise at every scale)",
+    )
+    denoise_cmd.add_argument(
+        "--amount",
+        type=float,
+        default=1.0,
+        help="how much of the luminance denoising to take, 0 to 1; less keeps some grain",
+    )
+    denoise_cmd.add_argument("--mask-output", type=Path, help="also write the mask used")
+    denoise_cmd.add_argument("--residual", type=Path, help="also write input minus output")
+    denoise_cmd.add_argument("--png", type=Path, help="also write an auto-stretched PNG")
+    denoise_cmd.set_defaults(run=_denoise)
 
     sharpen_cmd = commands.add_parser(
         "sharpen",
