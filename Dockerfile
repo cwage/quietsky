@@ -16,4 +16,7 @@ RUN uv sync --frozen --no-install-project
 COPY src ./src
 RUN uv sync --frozen
 
+# Commands run as the owner of the project mount; see the script.
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint
+ENTRYPOINT ["entrypoint"]
 CMD ["quietsky", "--help"]

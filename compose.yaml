@@ -2,7 +2,6 @@ services:
   quietsky:
     build: .
     image: quietsky:dev
-    user: "${UID:-1000}:${GID:-1000}"
     working_dir: /app
     environment:
       QUIETSKY_DATA: /data
