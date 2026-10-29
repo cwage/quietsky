@@ -78,6 +78,22 @@ to its own kind. It leaves a finer, more even grain than the wavelet
 shrink and is the better-looking of the two; `--strength` and
 `--chroma-strength` set the width of the weighting in noise deviations.
 
+The display version of a colour master, with the sky taken out, the colour
+balanced on the stars, each channel through the same arcsinh stretch so
+the sky lands at a chosen grey, a neutral sky and some saturation:
+
+    docker compose run --rm quietsky quietsky finish out/session/master/light_bg.fits -o out/session/master/finished.png
+
+The defaults give the Heart as it was finished by hand. The knobs beyond
+them: `--sky` and `--range` set where the sky sits and how much range the
+nebula gets above it (a tone curve after the arcsinh); `--local-contrast`
+gains the 16 to 64 px layers, which brings the dark lanes up;
+`--saturation` with `--sky-chroma 0` colours the nebula and leaves the
+sky grey; `--denoise nlm` takes the grain out of the linear master before
+the stretch, shown under the same stretch as without; `--star-reduction`
+pulls the stars towards their surroundings. `--half` writes a half-size
+copy too.
+
 To judge denoised versions against each other, and against a deeper stack
 of the same field as the nearest thing to the truth:
 

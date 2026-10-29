@@ -141,7 +141,7 @@ def denoise(image: Float32, noise: float, threshold: float = 3.0, layers: int = 
     return output
 
 
-def _local_minimum(image: Float32, radius: int) -> Float32:
+def local_minimum(image: Float32, radius: int) -> Float32:
     """The smallest value within radius pixels of each pixel."""
     height, width = image.shape
     padded = np.pad(image, radius, mode="edge")
@@ -178,7 +178,7 @@ def deconvolve(
     # Richardson-Lucy digs a dark ring round a star whose wings are wider
     # than the profile. Nothing is let fall below the darkest original pixel
     # within the profile's reach, which is where such a ring would sit.
-    estimate = np.maximum(estimate, _local_minimum(signal, int(np.ceil(2 * sigma))))
+    estimate = np.maximum(estimate, local_minimum(signal, int(np.ceil(2 * sigma))))
 
     # Signal at the scale of the profile, above the local sky: a nebula's own
     # broad glow does not open the mask, only what stands out from it.

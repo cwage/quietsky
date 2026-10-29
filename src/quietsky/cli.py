@@ -28,6 +28,7 @@ from quietsky.denoise import (
     NLM_STRENGTH,
     denoise_image,
 )
+from quietsky.finish import Settings, finish, to_8bit
 from quietsky.frame import (
     FITS_SUFFIXES,
     RAW_SUFFIXES,
@@ -475,6 +476,36 @@ def _denoise(args: argparse.Namespace) -> None:
         print(f"wrote {args.png}")
 
 
+def _finish(args: argparse.Namespace) -> None:
+    frame = load(args.file)
+    data = normalized(frame.data)
+    if data.ndim != 3 or data.shape[-1] != 3:
+        raise SystemExit("finish needs a colour (H, W, 3) master")
+    settings = Settings(
+        sky_target=args.sky,
+        range_target=args.range,
+        saturation=args.saturation,
+        sky_chroma=args.sky_chroma,
+        local_contrast=args.local_contrast,
+        star_reduction=args.star_reduction,
+        denoise=None if args.denoise == "none" else args.denoise,
+        denoise_amount=args.denoise_amount,
+    )
+    out, tone = finish(data, settings)
+    print(
+        f"sky {np.round(tone.sky, 4)} noise {tone.noise:.3g} colour gains {np.round(tone.gains, 3)}"
+    )
+    print(f"stretch factor {tone.stretch:.0f}, balance {tone.balance:.3f}")
+    image = Image.fromarray(to_8bit(out))
+    image.save(args.output)
+    print(f"wrote {args.output}")
+    if args.half:
+        image.resize((image.width // 2, image.height // 2), Image.Resampling.LANCZOS).save(
+            args.half
+        )
+        print(f"wrote {args.half}")
+
+
 def _preview(args: argparse.Namespace) -> None:
     stretched = autostretch(normalized(load(args.file).data))
     Image.fromarray((stretched * 255 + 0.5).astype(np.uint8)).save(args.output)
@@ -662,6 +693,55 @@ def main(argv: list[str] | None = None) -> None:
     )
     lunar.add_argument("--gamma", type=float, default=1.0, help="gamma applied to the PNG")
     lunar.set_defaults(run=_lunar)
+
+    finish_cmd = commands.add_parser(
+        "finish",
+        help="the display version of a colour master: sky out, colour balanced on the stars, "
+        "arcsinh stretch with the sky at a chosen grey, neutral sky, saturation",
+    )
+    finish_cmd.add_argument("file", type=Path, help="a linear colour master, background removed")
+    finish_cmd.add_argument("-o", "--output", type=Path, required=True, help="PNG to write")
+    finish_cmd.add_argument("--half", type=Path, help="also write a half-size PNG")
+    finish_cmd.add_argument(
+        "--sky", type=float, default=0.13, help="where the sky median lands, 0 to 1 (default 0.13)"
+    )
+    finish_cmd.add_argument(
+        "--range",
+        type=float,
+        help="tone curve: how far above the sky the nebula's 99th percentile lands "
+        "(default: none, the arcsinh alone)",
+    )
+    finish_cmd.add_argument(
+        "--saturation", type=float, default=1.3, help="chroma multiplier (default 1.3)"
+    )
+    finish_cmd.add_argument(
+        "--sky-chroma",
+        type=float,
+        default=1.0,
+        help="how much of the saturation the sky gets, 0 to 1 (default 1, the same as the nebula)",
+    )
+    finish_cmd.add_argument(
+        "--local-contrast",
+        type=float,
+        default=1.0,
+        help="gain on the 16 to 64 px layers of the stretched image (default 1, none)",
+    )
+    finish_cmd.add_argument(
+        "--star-reduction",
+        type=float,
+        default=0.0,
+        help="pull each star this far, 0 to 1, towards its surroundings (default 0)",
+    )
+    finish_cmd.add_argument(
+        "--denoise",
+        choices=["none", "wavelet", "nlm"],
+        default="none",
+        help="denoise the linear master before the stretch (default none)",
+    )
+    finish_cmd.add_argument(
+        "--denoise-amount", type=float, default=1.0, help="amount for the denoise (default 1)"
+    )
+    finish_cmd.set_defaults(run=_finish)
 
     preview = commands.add_parser("preview", help="write an auto-stretched PNG of a frame")
     preview.add_argument("file", type=Path)
