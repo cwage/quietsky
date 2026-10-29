@@ -21,7 +21,14 @@ import numpy as np
 import numpy.typing as npt
 
 from quietsky.deconvolve import gaussian_blur, measure_psf
-from quietsky.noise import MRS_MAX_ITERATIONS, MRS_TOLERANCE, RANGE, SIGNIFICANCE, k_sigma
+from quietsky.noise import (
+    MRS_MAX_ITERATIONS,
+    MRS_TOLERANCE,
+    RANGE,
+    SIGNIFICANCE,
+    evaluate_noise,
+    k_sigma,
+)
 from quietsky.stars import Stars, detect_stars
 from quietsky.stretch import TARGET_BACKGROUND, autostretch
 from quietsky.wavelets import b3_layers
@@ -44,6 +51,15 @@ CHROMA_THRESHOLDS = (4.0, 4.0, 4.0, 4.0, 4.0, 4.0)
 # Wavelet layers smoothed away before the luminance is stretched into the
 # mask: enough to drop the noise, not enough to lose the stars.
 MASK_SMOOTHING = 2
+# Non-local means: the width of the weighting, in pixel noise deviations,
+# for the brightness and for the colour, and the patch and search windows.
+# Patches that differ by more than the noise would make them get little
+# weight; the colour, with no detail to keep, averages wider.
+NLM_STRENGTH = 1.2
+NLM_CHROMA_STRENGTH = 1.8
+NLM_PATCH = 2
+NLM_SEARCH = 6
+METHODS = ("wavelet", "nlm")
 # Stretched luminance at which the mask reaches zero: bright nebula and star
 # cores are left as they are, well before the stretch reaches white.
 MASK_PROTECTED = 0.75
@@ -153,6 +169,60 @@ def star_footprint(luminance: Float32, stars: Stars | None = None) -> Float32:
     return footprint
 
 
+def non_local_means(
+    image: Float32, sigma: float, h: float, patch: int = NLM_PATCH, search: int = NLM_SEARCH
+) -> Float32:
+    """Replace each pixel by a weighted mean of the pixels whose surroundings match its own.
+
+    For every offset within the search window, the mean squared difference
+    between each pixel's patch and the patch at that offset is found with a
+    box filter; the offset pixel is then weighted by how far that
+    difference exceeds what noise alone would give (2 sigma^2), on a scale
+    of h^2. Pixels in sky find many matches and are averaged hard; a star
+    or a filament matches only itself and its like, and is kept. sigma is
+    the pixel noise and h the width of the weighting, both in image units.
+    """
+    height, width = image.shape
+    margin = search + patch
+    padded = np.pad(image.astype(np.float64), margin, mode="reflect")
+    # The pixels whose patches are compared: the image with a patch's
+    # margin round it, so every pixel of the image has a whole patch.
+    window = padded[
+        margin - patch : margin + height + patch, margin - patch : margin + width + patch
+    ]
+    total = np.ones((height, width))
+    accumulated = padded[margin : margin + height, margin : margin + width].copy()
+    floor = 2 * sigma**2
+    scale = max(h, 1e-30) ** 2
+    for dy in range(-search, search + 1):
+        for dx in range(-search, search + 1):
+            if dy == 0 and dx == 0:
+                continue
+            shifted = padded[
+                margin - patch + dy : margin + height + patch + dy,
+                margin - patch + dx : margin + width + patch + dx,
+            ]
+            distance = _box_mean_valid((window - shifted) ** 2, patch)
+            weight = np.exp(-np.maximum(distance - floor, 0) / scale)
+            total += weight
+            accumulated += weight * shifted[patch : patch + height, patch : patch + width]
+    result: Float32 = (accumulated / total).astype(np.float32)
+    return result
+
+
+def _box_mean_valid(image: Float64, half: int) -> Float64:
+    """The mean over the (2 half + 1) square, for the pixels with a full square inside."""
+    size = 2 * half + 1
+    summed = np.pad(image, ((1, 0), (1, 0))).cumsum(axis=0).cumsum(axis=1)
+    result: Float64 = (
+        summed[size:, size:]
+        - summed[:-size, size:]
+        - summed[size:, :-size]
+        + summed[:-size, :-size]
+    ) / size**2
+    return result
+
+
 def protection_mask(
     luminance: Float32, smoothing: int = MASK_SMOOTHING, stars: Stars | None = None
 ) -> Float32:
@@ -188,6 +258,9 @@ def denoise_image(
     mask: Float32 | None = None,
     sky: Region | None = None,
     amount: float = 1.0,
+    method: str = "wavelet",
+    strength: float = NLM_STRENGTH,
+    chroma_strength: float = NLM_CHROMA_STRENGTH,
 ) -> tuple[Float32, Float32, list[Component]]:
     """Denoise a linear (H, W) or (H, W, C) image.
 
@@ -203,9 +276,17 @@ def denoise_image(
     over the pixels the luminance leaves unclipped, or from the sky region
     (x, y, width, height) when given.
 
+    With method "nlm" the shrinking is replaced by non_local_means, with
+    the width of its weighting strength (for the brightness) or
+    chroma_strength (for the colour) times the component's pixel noise;
+    the thresholds are then unused, and the noise by layer is reported
+    over as many layers as they name.
+
     Returns the denoised image, the mask used and the noise of each
     component by layer before and after.
     """
+    if method not in METHODS:
+        raise ValueError(f"unknown denoise method: {method!r}")
     colour = image.ndim == 3
     luminance = image.mean(axis=-1).astype(np.float32) if colour else image
     if mask is None:
@@ -213,22 +294,26 @@ def denoise_image(
     valid = unclipped(luminance)
     components = []
 
-    def shrink(name: str, component: Float32, limits: tuple[float, ...]) -> Float32:
+    def shrink(name: str, component: Float32, limits: tuple[float, ...], width: float) -> Float32:
         if not limits or all(limit <= 0 for limit in limits):
             return component
         before = layer_noise(component, len(limits), sky, valid)
-        result = shrink_layers(component, before, list(limits))
+        if method == "nlm":
+            pixel = evaluate_noise(component + 0.5).sigma
+            result = non_local_means(component, pixel, width * pixel) if pixel > 0 else component
+        else:
+            result = shrink_layers(component, before, list(limits))
         components.append(Component(name, before, layer_noise(result, len(limits), sky, valid)))
         return result
 
-    cleaned = shrink("L", luminance, thresholds)
+    cleaned = shrink("L", luminance, thresholds, strength)
     cleaned = (luminance + amount * mask * (cleaned - luminance)).astype(np.float32)
     if not colour:
         return cleaned, mask, components
     names = "RGB" if image.shape[-1] == 3 else [str(c) for c in range(image.shape[-1])]
     chroma = [(image[..., index] - luminance).astype(np.float32) for index in range(len(names))]
     shrunk = [
-        shrink(name, component, chroma_thresholds)
+        shrink(name, component, chroma_thresholds, chroma_strength)
         for name, component in zip(names, chroma, strict=True)
     ]
     # Shrinking each colour on its own leaves a little brightness in their

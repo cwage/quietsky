@@ -71,6 +71,13 @@ the brightness, as the eye forgives smooth colour. `--threshold` and
 of the grain, `--mask` takes your own mask, and `--residual` writes what
 was taken out, which should look like grain and nothing else.
 
+`--method nlm` uses non-local means instead: each pixel becomes a
+weighted mean of the pixels whose surroundings match its own, so sky
+averages with sky from anywhere nearby while a star or a filament keeps
+to its own kind. It leaves a finer, more even grain than the wavelet
+shrink and is the better-looking of the two; `--strength` and
+`--chroma-strength` set the width of the weighting in noise deviations.
+
 To see what a folder holds before any of that, when a session arrives as
 one tree with everything mixed:
 

@@ -40,7 +40,10 @@ def k_sigma(values: npt.NDArray[np.float32], tolerance: float = 0.01, passes: in
     if sigma == 0:
         return sigma
     for _ in range(passes):
-        clipped = float(values[np.abs(values) < SIGNIFICANCE * sigma].std(dtype=np.float64, ddof=1))
+        kept = values[np.abs(values) < SIGNIFICANCE * sigma]
+        if len(kept) < 2:
+            return sigma
+        clipped = float(kept.std(dtype=np.float64, ddof=1))
         if abs(sigma - clipped) / sigma < tolerance:
             return clipped
         sigma = clipped

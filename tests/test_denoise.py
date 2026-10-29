@@ -5,7 +5,13 @@ import pytest
 
 from quietsky.cli import main
 from quietsky.deconvolve import gaussian_blur, measure_psf
-from quietsky.denoise import denoise_image, layer_noise, protection_mask, shrink_layers
+from quietsky.denoise import (
+    denoise_image,
+    layer_noise,
+    non_local_means,
+    protection_mask,
+    shrink_layers,
+)
 from quietsky.frame import Frame, load, save_fits
 from quietsky.noise import evaluate_noise
 from quietsky.stars import Stars
@@ -223,3 +229,45 @@ def test_faint_stars_are_protected_whole() -> None:
     assert mask[y, x] < 0.05
     assert cleaned[y, x] == pytest.approx(image[y, x], abs=0.05 * SIGMA)
     assert mask[y, x + 12] > 0.8
+
+
+def test_non_local_means_lowers_noise_and_keeps_an_edge_sharp() -> None:
+    image = (0.5 + white_noise()).astype(np.float32)
+    image[:, 200:] += 0.02
+    cleaned = non_local_means(image, SIGMA, 1.2 * SIGMA)
+    assert cleaned[:, :190].std() < 0.5 * image[:, :190].std()
+    assert cleaned[:, 210:].std() < 0.5 * image[:, 210:].std()
+    # The step stays a step: the columns either side of it keep their levels.
+    assert cleaned[:, 199].mean() == pytest.approx(0.5, abs=0.2 * SIGMA)
+    assert cleaned[:, 200].mean() == pytest.approx(0.52, abs=0.2 * SIGMA)
+
+
+def test_nlm_method_lowers_noise_and_keeps_the_signal() -> None:
+    image, truth = field()
+    cleaned, _, components = denoise_image(image, method="nlm")
+    assert evaluate_noise(cleaned).sigma < 0.5 * evaluate_noise(image).sigma
+    assert np.abs(cleaned - truth).mean() < 0.7 * np.abs(image - truth).mean()
+    level = SKY + 0.00002 * 150
+    assert (cleaned[NEBULA] - level).sum() == pytest.approx((truth[NEBULA] - level).sum(), rel=0.05)
+    star = (slice(90, 111), slice(290, 311))
+    level = SKY + 0.00002 * 100
+    assert (cleaned[star] - level).sum() == pytest.approx((truth[star] - level).sum(), rel=0.02)
+    assert measure_psf(cleaned, STARS) == pytest.approx(measure_psf(image, STARS), rel=0.05)
+    assert all(a < b for a, b in zip(components[0].after, components[0].before, strict=True))
+
+
+def test_unknown_method_is_refused() -> None:
+    image, _ = field()
+    with pytest.raises(ValueError, match="method"):
+        denoise_image(image, method="magic")
+
+
+def test_denoise_command_takes_the_nlm_method(tmp_path: Path) -> None:
+    image, _ = field()
+    colour = np.stack([image, image * 0.8, image * 0.6], axis=-1).astype(np.float32)
+    source, output = tmp_path / "in.fits", tmp_path / "out.fits"
+    save_fits(source, Frame(colour))
+    main(["denoise", str(source), "-o", str(output), "--method", "nlm", "--strength", "1.5"])
+    result = load(output).data
+    assert result.shape == colour.shape
+    assert evaluate_noise(result[..., 0]).sigma < 0.5 * evaluate_noise(colour[..., 0]).sigma
