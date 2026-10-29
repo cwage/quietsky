@@ -56,6 +56,18 @@ samples look like more than sky, but it cannot tell a featureless glow from
 a gradient, and a strong gradient with a slightly non-quadratic shape can
 set it off (the blue M81 master does), so this is yours to judge.
 
+To see what a folder holds before any of that, when a session arrives as
+one tree with everything mixed:
+
+    docker compose run --rm quietsky quietsky inventory /data/2018-09-12/m13
+
+That reads every frame's header without loading pixels and prints the
+groups: bias, dark, flat and light, raw and master, by filter, exposure,
+gain, binning, size and sensor temperature, with a count of how each
+frame's kind and filter were decided. Headers are trusted first; where
+they are silent, folder and file names are used. `--frames` lists every
+frame and the reason for its classification.
+
 The preprocessing steps are also available one at a time:
 
     docker compose run --rm quietsky quietsky info FRAME...

@@ -6,6 +6,9 @@ services:
     working_dir: /app
     environment:
       QUIETSKY_DATA: /data
+      # Other sessions the inventory tests check, when they are available.
+      QUIETSKY_MONO_SESSION:
+      QUIETSKY_MOANA_SESSION:
     volumes:
       - .:/app
       # Source frames and PixInsight reference output, never written to.
