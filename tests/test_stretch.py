@@ -34,3 +34,18 @@ def test_autostretch_treats_colour_channels_separately() -> None:
     assert stretched.shape == colour.shape
     assert np.median(stretched[..., 0]) == pytest.approx(TARGET_BACKGROUND, abs=0.01)
     assert np.median(stretched[..., 1]) == pytest.approx(TARGET_BACKGROUND, abs=0.01)
+
+
+def test_autostretch_can_take_its_parameters_from_a_reference() -> None:
+    rng = np.random.default_rng(0)
+    noisy = (0.02 + rng.normal(0, 0.001, (50, 60))).astype(np.float32)
+    quiet = (0.02 + rng.normal(0, 0.000001, noisy.shape)).astype(np.float32)
+    quiet[10, 10] = 0.021
+    # On its own, a nearly flat image is stretched to its own vanishing noise
+    # and a small step becomes bright; under the noisy reference's stretch it
+    # stays small, as it would in the noisy image.
+    alone = autostretch(quiet)
+    referenced = autostretch(quiet, reference=noisy)
+    assert alone[10, 10] - alone[0, 0] > 0.5
+    assert referenced[10, 10] - referenced[0, 0] < 0.2
+    assert np.allclose(autostretch(noisy, reference=noisy), autostretch(noisy))

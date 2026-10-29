@@ -21,9 +21,10 @@ def midtones(x: Float32, balance: float) -> Float32:
     return ((balance - 1) * x / ((2 * balance - 1) * x - balance)).astype(np.float32)
 
 
-def _autostretch_channel(x: Float32) -> Float32:
-    median = float(np.median(x))
-    sigma = MAD_TO_SIGMA * float(np.median(np.abs(x - median)))
+def _autostretch_channel(x: Float32, reference: Float32 | None = None) -> Float32:
+    r = x if reference is None else reference
+    median = float(np.median(r))
+    sigma = MAD_TO_SIGMA * float(np.median(np.abs(r - median)))
     shadows = min(max(median + SHADOWS_CLIP * sigma, 0.0), 1.0)
     if median <= shadows or shadows >= 1.0:
         return np.clip(x, 0, 1)
@@ -34,12 +35,21 @@ def _autostretch_channel(x: Float32) -> Float32:
     return midtones(np.clip((x - shadows) / (1 - shadows), 0, 1), balance)
 
 
-def autostretch(data: Float32) -> Float32:
+def autostretch(data: Float32, reference: Float32 | None = None) -> Float32:
     """Stretch linear data in [0, 1] so the sky background becomes dark grey.
 
     Colour channels are stretched independently, which also neutralises the
-    background colour.
+    background colour. The stretch is set by the data's median and noise;
+    with a reference image of the same shape it is set by the reference's
+    instead, so that a denoised image, whose noise no longer says how
+    strong a stretch it can take, is shown as its original would be.
     """
     if data.ndim == 2:
-        return _autostretch_channel(data)
-    return np.stack([_autostretch_channel(data[..., c]) for c in range(data.shape[-1])], axis=-1)
+        return _autostretch_channel(data, reference)
+    return np.stack(
+        [
+            _autostretch_channel(data[..., c], None if reference is None else reference[..., c])
+            for c in range(data.shape[-1])
+        ],
+        axis=-1,
+    )

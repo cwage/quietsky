@@ -23,6 +23,9 @@ from quietsky.deconvolve import (
 from quietsky.denoise import (
     CHROMA_THRESHOLDS,
     LUMINANCE_THRESHOLDS,
+    METHODS,
+    NLM_CHROMA_STRENGTH,
+    NLM_STRENGTH,
     denoise_image,
 )
 from quietsky.frame import (
@@ -443,7 +446,15 @@ def _denoise(args: argparse.Namespace) -> None:
     data = normalized(frame.data)
     mask = normalized(load(args.mask).data) if args.mask else None
     cleaned, used_mask, components = denoise_image(
-        data, tuple(args.threshold), tuple(args.chroma_threshold), mask, args.sky, args.amount
+        data,
+        tuple(args.threshold),
+        tuple(args.chroma_threshold),
+        mask,
+        args.sky,
+        args.amount,
+        args.method,
+        args.strength,
+        args.chroma_strength,
     )
     for component in components:
         before = ", ".join(f"{sigma:.3g}" for sigma in component.before)
@@ -458,7 +469,8 @@ def _denoise(args: argparse.Namespace) -> None:
         save_fits(args.residual, Frame((data - cleaned).astype(np.float32), frame.header))
         print(f"wrote {args.residual}")
     if args.png:
-        stretched = autostretch(cleaned)
+        # Under the input's stretch, not one set by the noise that is now gone.
+        stretched = autostretch(cleaned, reference=data)
         Image.fromarray((stretched * 255 + 0.5).astype(np.uint8)).save(args.png)
         print(f"wrote {args.png}")
 
@@ -694,6 +706,25 @@ def main(argv: list[str] | None = None) -> None:
         type=lambda text: tuple(int(value) for value in text.split(",")),
         help="X,Y,W,H of a patch of empty sky to measure the noise in (default: the pixels "
         "within the noise at every scale)",
+    )
+    denoise_cmd.add_argument(
+        "--method",
+        choices=METHODS,
+        default="wavelet",
+        help="wavelet: shrink each layer within the noise; nlm: non-local means, each pixel "
+        "averaged with the pixels whose surroundings match (default wavelet)",
+    )
+    denoise_cmd.add_argument(
+        "--strength",
+        type=float,
+        default=NLM_STRENGTH,
+        help=f"nlm: width of the weighting in noise deviations (default {NLM_STRENGTH})",
+    )
+    denoise_cmd.add_argument(
+        "--chroma-strength",
+        type=float,
+        default=NLM_CHROMA_STRENGTH,
+        help=f"nlm: the same for the colour (default {NLM_CHROMA_STRENGTH})",
     )
     denoise_cmd.add_argument(
         "--amount",
