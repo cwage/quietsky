@@ -19,6 +19,7 @@ from quietsky.deconvolve import (
     gaussian_blur,
     measure_psf,
     richardson_lucy,
+    star_profile,
 )
 from quietsky.denoise import (
     CHROMA_THRESHOLDS,
@@ -404,6 +405,13 @@ def _lunar(args: argparse.Namespace) -> None:
         print(f"wrote {args.output / 'moon-colour.png'}")
 
 
+def _wings(kernel: np.ndarray, radius: float) -> float:
+    """The share of a kernel's light beyond the radius, in pixels."""
+    offsets = np.arange(kernel.shape[0]) - kernel.shape[0] // 2
+    outside = np.hypot(offsets[:, None], offsets[None, :]) > radius
+    return float(kernel[outside].sum() / kernel.sum())
+
+
 def _sharpen(args: argparse.Namespace) -> None:
     frame = load(args.file)
     data = normalized(frame.data)
@@ -425,7 +433,15 @@ def _sharpen(args: argparse.Namespace) -> None:
         if sigma < target:
             result = gaussian_blur(result, float(np.sqrt(target**2 - sigma**2)))
         if args.iterations > 0:
-            result = deconvolve(result, target, args.iterations, noise, args.support)
+            kernel = None
+            if args.kernel == "measured":
+                kernel = star_profile(result)
+                wings = _wings(kernel, 2 * target)
+                print(
+                    f"{name}: {100 * wings:.1f}% of a star's light lies beyond {2 * target:.1f} px "
+                    "(a Gaussian would have 13.5%)"
+                )
+            result = deconvolve(result, target, args.iterations, noise, args.support, kernel)
         if args.gains:
             result = sharpen(result, args.gains)
         print(
@@ -859,6 +875,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     sharpen_cmd.add_argument(
         "--iterations", type=int, default=5, help="Richardson-Lucy iterations; 0 for none"
+    )
+    sharpen_cmd.add_argument(
+        "--kernel",
+        choices=["measured", "gaussian"],
+        default="measured",
+        help="deconvolve with the stars' measured profile, wings and all, or with a Gaussian "
+        "of their width, which digs a ring round each star (default measured)",
     )
     sharpen_cmd.add_argument(
         "--denoise",

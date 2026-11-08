@@ -112,6 +112,23 @@ master before the stretch, shown under the same stretch as without;
 `--star-reduction` pulls the stars towards their surroundings. `--half`
 writes a half-size copy too.
 
+To tighten the stars and the small features of a nebula, before the finish:
+
+    docker compose run --rm quietsky quietsky sharpen out/session/master/light_bg.fits -o out/session/master/light_sharp.fits --iterations 3 --denoise 0
+
+The star profile is measured from the stars themselves, stacked at their
+centres and averaged by radius, and deconvolved by Richardson-Lucy where
+there is signal; the sky is left alone. Richardson-Lucy moves a star's
+near wings into its core within a few iterations and never reaches the
+far halo, which left a dark ring round every star; now, wherever a
+star's light (its peak spread by the measured profile) stands above the
+noise, nothing falls below the original, so the core tightens and
+brightens over wings that stay. The narrower colours are blurred to the
+widest first so all end alike. `--kernel gaussian` deconvolves with a
+Gaussian of the stars' width instead; `--support` sets how far above the
+sky the signal must stand to be deconvolved; `--denoise` drops the finest
+wavelet layer first (off above, as the finish's NL-means does that job).
+
 To judge denoised versions against each other, and against a deeper stack
 of the same field as the nearest thing to the truth:
 
