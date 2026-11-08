@@ -306,3 +306,17 @@ def test_coverage_cleans_the_shallow_side_as_hard_as_its_noise_asks(method: str)
     alone, _, _ = denoise_image(image[:, :120].copy(), mask=mask[:, :120], method=method)
     assert aware[deep].std() == pytest.approx(alone[deep].std(), rel=0.25)
     assert abs(aware[shallow].mean() - 0.02) < 0.0002
+
+
+def test_a_filled_region_does_not_weaken_the_nlm_denoise() -> None:
+    image, coverage = uneven_depth()
+    # Beside it a region no light reached, zero, as the finish hands it over.
+    padded = np.pad(image, ((0, 0), (0, 120)), constant_values=0.0)
+    cover = np.pad(coverage, ((0, 0), (0, 120)), constant_values=0)
+    mask = np.ones(padded.shape, np.float32)
+
+    alone, _, _ = denoise_image(image, mask=mask[:, :240], method="nlm", coverage=coverage)
+    beside, _, _ = denoise_image(padded, mask=mask, method="nlm", coverage=cover)
+
+    deep = (slice(None), slice(20, 100))
+    assert beside[deep].std() == pytest.approx(alone[deep].std(), rel=0.15)

@@ -65,3 +65,15 @@ def test_noise_matches_pixinsight_on_debayered_lights() -> None:
             # PixInsight prints four digits; ours can differ in the last one.
             assert noise.sigma == pytest.approx(sigma, rel=3e-4)
             assert noise.fraction == pytest.approx(fraction, abs=2e-4)
+
+
+def test_a_flat_fill_is_left_out_of_the_estimate_when_asked() -> None:
+    rng = np.random.default_rng(2)
+    image = (0.1 + rng.normal(0, 0.001, (200, 300))).astype(np.float32)
+    filled = image.copy()
+    filled[:, 150:] = 0.1  # flat, as a master is where no light reached and was filled
+    covered = np.zeros(image.shape, np.bool_)
+    covered[:, :150] = True
+
+    assert evaluate_noise(filled).sigma < 0.8 * evaluate_noise(image).sigma
+    assert evaluate_noise(filled, covered).sigma == pytest.approx(0.001, rel=0.05)
