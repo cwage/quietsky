@@ -370,6 +370,11 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
         )
         rgb = np.where(covered[..., None], denoised.astype(np.float64), fill)
     rgb = (rgb - sky) * gains
+    # A star core saturated in the master is white, whatever the gains make
+    # of a clipped channel; otherwise the channel with the smallest gain
+    # falls short of the others and the core comes out tinted.
+    saturated = image.max(axis=2) >= STAR_SATURATED
+    rgb[saturated] = rgb[saturated].max(axis=1, keepdims=True)
     chan = np.stack([_stretch(rgb[..., c], tone) for c in range(3)], axis=-1)
     # Neutral sky: each channel's median lands on the same level.
     chan -= np.median(chan[covered], axis=0) - np.median(chan[covered])
