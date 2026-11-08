@@ -50,10 +50,22 @@ def k_sigma(values: npt.NDArray[np.float32], tolerance: float = 0.01, passes: in
     return sigma
 
 
-def noise_mrs(image: npt.NDArray[np.floating], layer_count: int = 4) -> Noise:
-    """Noise of a 2-D image from its multiresolution support."""
+def noise_mrs(
+    image: npt.NDArray[np.floating],
+    layer_count: int = 4,
+    valid: npt.NDArray[np.bool_] | None = None,
+) -> Noise:
+    """Noise of a 2-D image from its multiresolution support.
+
+    valid marks the pixels the noise may be taken from, besides those
+    clipped to black or white; a flat fill, as a master has where no
+    light reached, would otherwise count as noiseless and pull the
+    estimate down.
+    """
     layers, residual = b3_layers(image, layer_count)
     in_range = (image > RANGE[0]) & (image < RANGE[1])
+    if valid is not None:
+        in_range &= valid
     detail = image - residual
 
     sigma = k_sigma(layers[0][in_range]) / B3_NOISE_PER_LAYER[0]
@@ -69,23 +81,28 @@ def noise_mrs(image: npt.NDArray[np.floating], layer_count: int = 4) -> Noise:
         previous, sigma = sigma, float(detail[noise].std(dtype=np.float64, ddof=1))
         if abs(previous - sigma) / previous < MRS_TOLERANCE:
             break
-    return Noise(sigma / MRS_BIAS, count / image.size)
+    return Noise(sigma / MRS_BIAS, count / max(int(in_range.sum()), 1))
 
 
-def evaluate_noise(image: npt.NDArray[np.floating]) -> Noise:
+def evaluate_noise(
+    image: npt.NDArray[np.floating], valid: npt.NDArray[np.bool_] | None = None
+) -> Noise:
     """Noise of a 2-D image, using as many wavelet layers as the image allows.
 
     Crowded images leave few pure-noise pixels at four layers, so the count
-    drops until enough remain.
+    drops until enough remain. valid marks the pixels to take it from.
     """
     for layer_count in (4, 3, 2):
-        noise = noise_mrs(image, layer_count)
+        noise = noise_mrs(image, layer_count, valid)
         if noise.fraction >= MIN_NOISE_FRACTION:
             return noise
-    return Noise(k_sigma_noise(image), 1.0)
+    return Noise(k_sigma_noise(image, valid), 1.0)
 
 
-def k_sigma_noise(image: npt.NDArray[np.floating]) -> float:
-    """Quick noise estimate: the clipped spread of the finest wavelet layer."""
+def k_sigma_noise(
+    image: npt.NDArray[np.floating], valid: npt.NDArray[np.bool_] | None = None
+) -> float:
+    """Quick noise estimate: the clipped spread of the finest wavelet layer, where valid."""
     layers, _ = b3_layers(image, 1)
-    return k_sigma(layers[0]) / B3_NOISE_PER_LAYER[0]
+    finest = layers[0] if valid is None else layers[0][valid]
+    return k_sigma(finest) / B3_NOISE_PER_LAYER[0]

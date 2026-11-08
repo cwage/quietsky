@@ -326,8 +326,9 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
     # with the sky, so that nothing measured or stretched sees an edge
     # there, and come out black.
     covered = rgb.max(axis=2) > 0
+    fill = np.median(rgb[covered], axis=0)
     if not covered.all():
-        rgb = np.where(covered[..., None], rgb, np.median(rgb[covered], axis=0))
+        rgb = np.where(covered[..., None], rgb, fill)
         image = rgb.astype(np.float32)
     sky, noise, gains = measure(rgb, valid=covered)
     if settings.gains is not None:
@@ -344,13 +345,16 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
         tone = replace(tone, widths=widths)
         rgb = image.astype(np.float64)
     if settings.denoise:
+        # Denoised with the unreached pixels at zero, which the noise
+        # estimates leave out, rather than the fill, which they would take
+        # for noiseless; then filled again.
         denoised, _, _ = denoise_image(
-            image,
+            np.where(covered[..., None], image, 0).astype(np.float32),
             method=settings.denoise,
             amount=settings.denoise_amount,
             coverage=settings.coverage,
         )
-        rgb = denoised.astype(np.float64)
+        rgb = np.where(covered[..., None], denoised.astype(np.float64), fill)
     rgb = (rgb - sky) * gains
     chan = np.stack([_stretch(rgb[..., c], tone) for c in range(3)], axis=-1)
     # Neutral sky: each channel's median lands on the same level.

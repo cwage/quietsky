@@ -331,7 +331,7 @@ def denoise_image(
             return component
         before = layer_noise(component, len(limits), sky, valid)
         if method == "nlm":
-            pixel = evaluate_noise(component + 0.5).sigma
+            pixel = evaluate_noise(component + 0.5, valid).sigma
             result = (
                 non_local_means(component, pixel, width * pixel, factor=factor)
                 if pixel > 0
