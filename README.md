@@ -45,6 +45,17 @@ For the M13 session in the archive, at the camera's full 14-bit depth (about
 
     docker compose run --rm quietsky quietsky preprocess --bias /data/2018-09-12/m13/offset --dark /data/2018-09-12/m13/dark --flat /data/2018-09-12/m13/flat --light /data/2018-09-12/m13/light -o out/m13
 
+The master covers the reference frame's rectangle, and the aligned lights
+are cut to it. On an alt-azimuth mount the field turns all night, so a
+run sweeps more sky than one frame holds; `--canvas union` keeps all of
+it, each aligned light written over its own footprint with its placement
+in the header, and the master's `PLACEX` and `PLACEY` say where its pixel
+(0, 0) sits on the reference frame. `--canvas intersection` keeps only the
+rectangle every light reached, so the master is the same depth
+throughout. Either way `master/coverage.fits` holds the number of lights
+that reached each pixel; on a union master the edges are shallower, and
+noisier by the square root of that.
+
 Then take the sky gradient out of the master light:
 
     docker compose run --rm quietsky quietsky background out/session/master/light.fits -o out/session/master/light_bg.fits

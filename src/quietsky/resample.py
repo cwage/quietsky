@@ -79,6 +79,29 @@ def interpolate(
     return result
 
 
+def footprint(matrix: Float64, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
+    """Where an input of this shape lands in the output: x, y, width and height of its bounding box.
+
+    matrix maps output (reference) coordinates to the input, as
+    solve_transformation gives it; the input's corners are taken back
+    through its inverse. The box is rounded outwards to whole pixels.
+    """
+    height, width = shape[:2]
+    corners = np.array([[0, width - 1, 0, width - 1], [0, 0, height - 1, height - 1], [1, 1, 1, 1]])
+    u, v, w = np.linalg.inv(matrix) @ corners.astype(np.float64)
+    x, y = u / w, v / w
+    x0, y0 = int(np.floor(x.min())), int(np.floor(y.min()))
+    x1, y1 = int(np.ceil(x.max())), int(np.ceil(y.max()))
+    return x0, y0, x1 - x0 + 1, y1 - y0 + 1
+
+
+def placed(matrix: Float64, x: int, y: int) -> Float64:
+    """The transformation for an output whose pixel (0, 0) is the reference's (x, y)."""
+    shift = np.array([[1.0, 0.0, x], [0.0, 1.0, y], [0.0, 0.0, 1.0]])
+    result: Float64 = matrix @ shift
+    return result
+
+
 def resample(
     image: npt.NDArray[np.floating],
     matrix: Float64,

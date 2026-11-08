@@ -48,6 +48,9 @@ class Integration:
     # Number of pixels rejected in each frame.
     frame_rejected_low: Index
     frame_rejected_high: Index
+    # Number of frames covering each pixel: within the valid range's lower
+    # limit, so not a black registration border; every frame without one.
+    coverage: npt.NDArray[np.int32]
 
 
 def _std(values: Float, mask: Bool, n: Index) -> Float:
@@ -263,6 +266,7 @@ def integrate(
     image = np.empty((height, width), np.float32)
     rejection_low = np.empty((height, width), np.float32)
     rejection_high = np.empty((height, width), np.float32)
+    coverage = np.full((height, width), frames, np.int32)
     frame_low = np.zeros(frames, np.int64)
     frame_high = np.zeros(frames, np.int64)
     frame_weights = np.ones(frames) if weights is None else weights
@@ -278,6 +282,7 @@ def integrate(
         too_low = too_high = None
         if valid_range is not None:
             too_low, too_high = chunk <= valid_range[0], chunk >= valid_range[1]
+            coverage[rows] = (~too_low).sum(axis=0).reshape(image[rows].shape)
             # Where every frame that covers a pixel is saturated, as in the
             # core of a bright star, saturated is the right answer; rejecting
             # them all would leave a black hole.
@@ -309,7 +314,42 @@ def integrate(
                 frame_low += low_counts
                 frame_high += high_counts
 
-    return Integration(image, rejection_low, rejection_high, frame_low, frame_high)
+    return Integration(image, rejection_low, rejection_high, frame_low, frame_high, coverage)
+
+
+def covered_box(coverage: npt.NDArray[np.integer], count: int) -> tuple[int, int, int, int]:
+    """A rectangle (x, y, width, height) covered by all count frames: the area every frame reached.
+
+    Starts from the box round the fully covered pixels and trims, from
+    whichever edge has most pixels short of full coverage, until none is
+    left inside. The rectangle is a large one, not provably the largest.
+    """
+    full = coverage >= count
+    if not full.any():
+        return 0, 0, 0, 0
+    rows, columns = np.nonzero(full.any(axis=1)), np.nonzero(full.any(axis=0))
+    top, bottom = int(rows[0][0]), int(rows[0][-1]) + 1
+    left, right = int(columns[0][0]), int(columns[0][-1]) + 1
+    while top < bottom and left < right:
+        inside = full[top:bottom, left:right]
+        if inside.all():
+            break
+        short = (
+            int((~inside[0]).sum()),
+            int((~inside[-1]).sum()),
+            int((~inside[:, 0]).sum()),
+            int((~inside[:, -1]).sum()),
+        )
+        edge = int(np.argmax(short))
+        if edge == 0:
+            top += 1
+        elif edge == 1:
+            bottom -= 1
+        elif edge == 2:
+            left += 1
+        else:
+            right -= 1
+    return left, top, right - left, bottom - top
 
 
 # Pixels at or beyond these limits are black registration borders or

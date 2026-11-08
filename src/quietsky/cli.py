@@ -41,6 +41,7 @@ from quietsky.frame import (
     save_fits,
 )
 from quietsky.integrate import (
+    covered_box,
     flux_normalization,
     frame_estimates,
     integrate,
@@ -65,7 +66,7 @@ from quietsky.lunar import (
 from quietsky.noise import evaluate_noise
 from quietsky.pipeline import Session, frame_noise, noise_keywords, preprocess
 from quietsky.register import RegistrationError, solve_transformation
-from quietsky.resample import resample
+from quietsky.resample import footprint, placed, resample
 from quietsky.stars import detect_stars
 from quietsky.stretch import autostretch
 
@@ -94,6 +95,20 @@ def _stack(args: argparse.Namespace) -> None:
         )
         image = np.squeeze(np.stack([result.image for result in results], axis=-1))
         total = first.size * len(args.files)
+        coverage = results[0].coverage
+        origin = channels[0].origin
+        if args.canvas == "intersection":
+            x, y, width, height = covered_box(coverage, len(args.files))
+            image = image[y : y + height, x : x + width]
+            coverage = coverage[y : y + height, x : x + width]
+            origin = (origin[0] + x, origin[1] + y)
+        print(
+            f"canvas {image.shape[1]}x{image.shape[0]}, pixel (0, 0) at {origin} of the reference, "
+            f"covered by {int(coverage.min())} to {int(coverage.max())} frames"
+        )
+        if args.coverage:
+            save_fits(args.coverage, Frame(coverage, {"NCOMBINE": len(args.files)}))
+            print(f"wrote {args.coverage}")
     else:
         stack = np.stack([normalized(load(path).data) for path in args.files])
         normalization = flux_normalization(frame_estimates(stack)[0]) if args.flat else None
@@ -158,8 +173,19 @@ def _register(args: argparse.Namespace) -> None:
             failed += 1
             continue
         output = args.output / f"{path.stem}_r.fits"
-        save_fits(output, Frame(resample(data, transformation.matrix), frame.header))
-        print(f"{output}: {transformation.pairs} stars matched, rms {transformation.rms:.2f} px")
+        matrix, place = transformation.matrix, (0, 0)
+        if args.canvas == "union":
+            x, y, width, height = footprint(matrix, data.shape)
+            matrix, place = placed(matrix, x, y), (x, y)
+            aligned = resample(data, matrix, shape=(height, width))
+        else:
+            aligned = resample(data, matrix)
+        placement = {"PLACEX": place[0], "PLACEY": place[1]}
+        save_fits(output, Frame(aligned, frame.header | placement))
+        print(
+            f"{output}: {transformation.pairs} stars matched, rms {transformation.rms:.2f} px"
+            + (f", placed at {place}" if args.canvas == "union" else "")
+        )
     if failed:
         raise SystemExit(f"{failed} frame(s) could not be registered")
 
@@ -207,7 +233,7 @@ def _preprocess(args: argparse.Namespace) -> None:
     )
     if not session.light:
         raise SystemExit(f"no light frames in {args.light}")
-    preprocess(session, args.output, reference=args.reference)
+    preprocess(session, args.output, reference=args.reference, canvas=args.canvas)
 
 
 def _png16(path: Path, image: npt.NDArray[np.float32]) -> None:
@@ -571,6 +597,16 @@ def main(argv: list[str] | None = None) -> None:
         help="match level and scale, weight frames by noise and ignore black or saturated "
         "pixels, as registered lights need",
     )
+    stack.add_argument(
+        "--canvas",
+        choices=["reference", "intersection"],
+        default="reference",
+        help="with --light: everything the registered frames cover, or only the rectangle "
+        "every frame reached (default reference)",
+    )
+    stack.add_argument(
+        "--coverage", type=Path, help="with --light: also write how many frames reached each pixel"
+    )
     stack.set_defaults(run=_stack)
 
     calibration = commands.add_parser(
@@ -610,6 +646,13 @@ def main(argv: list[str] | None = None) -> None:
     register.add_argument(
         "-o", "--output", type=Path, required=True, help="directory for the aligned frames"
     )
+    register.add_argument(
+        "--canvas",
+        choices=["reference", "union"],
+        default="reference",
+        help="cut each aligned frame to the reference's rectangle, or keep all of it over its "
+        "own footprint, placed on the reference by PLACEX and PLACEY (default reference)",
+    )
     register.set_defaults(run=_register)
 
     whole = commands.add_parser(
@@ -630,6 +673,13 @@ def main(argv: list[str] | None = None) -> None:
         "--reference",
         type=Path,
         help="calibrated frame to align the lights to (default: the first light)",
+    )
+    whole.add_argument(
+        "--canvas",
+        choices=["reference", "union", "intersection"],
+        default="reference",
+        help="what the master covers: the reference frame's rectangle, everything any light "
+        "reached, or only what every light reached (default reference)",
     )
     whole.add_argument(
         "-o", "--output", type=Path, required=True, help="directory for masters and aligned lights"

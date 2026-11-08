@@ -18,6 +18,7 @@ from quietsky.debayer import debayer_vng
 from quietsky.frame import DiskStack, Frame, HeaderValue, load, normalized, save_fits
 from quietsky.integrate import (
     Stack,
+    covered_box,
     flux_normalization,
     frame_estimates,
     integrate,
@@ -25,7 +26,7 @@ from quietsky.integrate import (
 )
 from quietsky.noise import evaluate_noise
 from quietsky.register import RegistrationError, solve_transformation
-from quietsky.resample import resample
+from quietsky.resample import footprint, placed, resample
 from quietsky.stars import detect_stars
 from quietsky.stretch import autostretch
 
@@ -113,17 +114,27 @@ def preprocess(
     load_frame: Callable[[Path], Frame] = load_normalized,
     report: Callable[[str], None] = print,
     reference: Path | None = None,
+    canvas: str = "reference",
 ) -> Path:
     """Preprocess a session and return the path of the master light.
 
     Writes master/bias.fits, dark.fits, flat.fits and light.fits, a preview
-    master/light.png, and the aligned lights in registered/. Lights are
+    master/light.png, master/coverage.fits with the number of lights that
+    reached each pixel, and the aligned lights in registered/. Lights are
     aligned to the first one; a light whose stars cannot be matched to it is
     left out. Hot pixels are not corrected.
 
     With reference, a frame that is already calibrated, every light is
     aligned to that frame instead, so that the masters of several runs, such
     as one per filter, line up.
+
+    canvas says what the master covers. "reference": the reference frame's
+    own rectangle, as the aligned lights are cut to it. "union": everything
+    any light reached; each aligned light is written over its own footprint
+    with its placement in the header, and the master's PLACEX and PLACEY
+    give where its pixel (0, 0) sits on the reference frame. "intersection":
+    the rectangle every light reached, so the master is the same depth
+    throughout.
 
     A session may lack bias, dark or flat frames; the corrections that
     cannot be made are skipped. Without bias frames the dark is subtracted
@@ -222,6 +233,7 @@ def preprocess(
         image = debayer_vng(image, pattern) if isinstance(pattern, str) else image[..., None]
         header |= noise_keywords(image)
         stars = detect_stars(image)
+        place = (0, 0)
         if reference_stars is None:
             reference_stars = stars
             report(f"{path.name}: reference, {len(stars)} stars, dark scale {dark_scale:.3f}")
@@ -231,11 +243,19 @@ def preprocess(
             except RegistrationError as error:
                 report(f"{path.name}: left out, {error}")
                 continue
-            image = resample(image, transformation.matrix)
+            matrix = transformation.matrix
+            if canvas == "union":
+                x, y, width, height = footprint(matrix, image.shape)
+                matrix, place = placed(matrix, x, y), (x, y)
+                image = resample(image, matrix, shape=(height, width))
+            else:
+                image = resample(image, matrix)
             report(
                 f"{path.name}: {transformation.pairs} stars matched, "
                 f"rms {transformation.rms:.2f} px, dark scale {dark_scale:.3f}"
+                + (f", placed at {place}" if canvas == "union" else "")
             )
+        header["PLACEX"], header["PLACEY"] = place
         # Written under another name and renamed when complete, so a run that
         # stops part way never leaves a half-written frame to be resumed from.
         partial = done.with_name(done.name + ".part")
@@ -257,7 +277,20 @@ def preprocess(
         f"master light from {len(written)} frames, "
         f"rejected low {low / total:.3%}, high {high / total:.3%}"
     )
+    coverage = results[0].coverage
+    origin = channels[0].origin
+    if canvas == "intersection":
+        x, y, width, height = covered_box(coverage, len(written))
+        light = light[y : y + height, x : x + width]
+        coverage = coverage[y : y + height, x : x + width]
+        origin = (origin[0] + x, origin[1] + y)
+    report(
+        f"canvas {light.shape[1]}x{light.shape[0]}, pixel (0, 0) at {origin} of the reference, "
+        f"covered by {int(coverage.min())} to {int(coverage.max())} frames"
+    )
     path = master / "light.fits"
-    save_fits(path, Frame(light, {"NCOMBINE": len(written)}))
+    placement: dict[str, HeaderValue] = {"PLACEX": origin[0], "PLACEY": origin[1]}
+    save_fits(path, Frame(light, {"NCOMBINE": len(written)} | placement))
+    save_fits(master / "coverage.fits", Frame(coverage, {"NCOMBINE": len(written)} | placement))
     Image.fromarray((autostretch(light) * 255 + 0.5).astype(np.uint8)).save(master / "light.png")
     return path

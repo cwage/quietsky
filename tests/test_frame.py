@@ -93,3 +93,30 @@ def test_load_header_gives_the_keywords_without_the_pixels(tmp_path: Path) -> No
     save_fits(tmp_path / "frame.fits", Frame(np.zeros((4, 4), np.float32), {"NOISE00": 1e-5}))
 
     assert load_header(tmp_path / "frame.fits") == {"NOISE00": 1e-5}
+
+
+def test_disk_stack_places_frames_of_different_sizes_on_one_canvas(tmp_path: Path) -> None:
+    big = np.full((10, 12), 1.0, np.float32)
+    small = np.full((8, 6), 2.0, np.float32)
+    save_fits(tmp_path / "a.fits", Frame(big, {"PLACEX": 0, "PLACEY": 0}))
+    save_fits(tmp_path / "b.fits", Frame(small, {"PLACEX": 5, "PLACEY": 4}))
+    save_fits(tmp_path / "c.fits", Frame(small, {"PLACEX": -2, "PLACEY": 6}))
+
+    stack = DiskStack([tmp_path / "a.fits", tmp_path / "b.fits", tmp_path / "c.fits"])
+
+    # The canvas is the union: from x -2 to 11 and y 0 to 13.
+    assert stack.origin == (-2, 0)
+    assert stack.shape == (3, 14, 14)
+    whole = stack[1]
+    assert whole.shape == (14, 14)
+    assert (whole[4:12, 7:13] == 2.0).all()
+    assert whole.sum() == small.sum()
+    assert (stack[2][6:14, 0:6] == 2.0).all()
+    band = stack[:, 3:7, :]
+    assert band.shape == (3, 4, 14)
+    assert (band[0, :, 2:14] == 1.0).all() and (band[0, :, :2] == 0.0).all()
+    assert (band[1, 0] == 0.0).all() and (band[1, 1:, 7:13] == 2.0).all()
+    # Frames without a placement sit at (0, 0), and a stack of them is as before.
+    save_fits(tmp_path / "plain.fits", Frame(big))
+    plain = DiskStack([tmp_path / "plain.fits", tmp_path / "a.fits"])
+    assert plain.origin == (0, 0) and plain.shape == (2, 10, 12)
