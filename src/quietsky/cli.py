@@ -476,6 +476,18 @@ def _denoise(args: argparse.Namespace) -> None:
         print(f"wrote {args.png}")
 
 
+def _three_floats(text: str) -> tuple[float, float, float]:
+    """R,G,B as three floats."""
+    parts = text.split(",")
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("expected three numbers R,G,B")
+    try:
+        r, g, b = (float(part) for part in parts)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected three numbers R,G,B") from error
+    return r, g, b
+
+
 def _finish(args: argparse.Namespace) -> None:
     frame = load(args.file)
     data = normalized(frame.data)
@@ -490,11 +502,15 @@ def _finish(args: argparse.Namespace) -> None:
         star_reduction=args.star_reduction,
         denoise=None if args.denoise == "none" else args.denoise,
         denoise_amount=args.denoise_amount,
+        gains=args.gains,
+        match_psf=args.match_psf,
     )
     out, tone = finish(data, settings)
     print(
         f"sky {np.round(tone.sky, 4)} noise {tone.noise:.3g} colour gains {np.round(tone.gains, 3)}"
     )
+    if tone.widths is not None:
+        print(f"star width per channel {np.round(tone.widths, 2)} px, matched to the widest")
     print(f"stretch factor {tone.stretch:.0f}, balance {tone.balance:.3f}")
     image = Image.fromarray(to_8bit(out))
     image.save(args.output)
@@ -740,6 +756,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     finish_cmd.add_argument(
         "--denoise-amount", type=float, default=1.0, help="amount for the denoise (default 1)"
+    )
+    finish_cmd.add_argument(
+        "--gains",
+        type=_three_floats,
+        help="colour gains R,G,B to use instead of the ones measured on the stars",
+    )
+    finish_cmd.add_argument(
+        "--match-psf",
+        action="store_true",
+        help="blur the sharper channels to the width of the widest before the stretch, "
+        "so that stars are white in every pixel and not only in their light as a whole",
     )
     finish_cmd.set_defaults(run=_finish)
 

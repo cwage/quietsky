@@ -84,15 +84,33 @@ the sky lands at a chosen grey, a neutral sky and some saturation:
 
     docker compose run --rm quietsky quietsky finish out/session/master/light_bg.fits -o out/session/master/finished.png
 
-The defaults give the Heart as it was finished by hand. The knobs beyond
-them: `--sky` and `--range` set where the sky sits and how much range the
-nebula gets above it (a tone curve after the arcsinh); `--local-contrast`
-gains the 16 to 64 px layers, which brings the dark lanes up;
-`--saturation` with `--sky-chroma 0` colours the nebula and leaves the
-sky grey; `--denoise nlm` takes the grain out of the linear master before
-the stretch, shown under the same stretch as without; `--star-reduction`
-pulls the stars towards their surroundings. `--half` writes a half-size
-copy too.
+The colour balance makes the median star white, each star's light summed
+over an aperture per channel. Balancing on the brightest pixels instead,
+as the Heart was finished by hand, made only the star cores white on the
+Seestar: its red channel is a third wider than the green and blue, so the
+peaks hold less of the red light than the wings and the faint stars do,
+and those came out pink over a brown sky. `--gains R,G,B` sets the gains
+by hand.
+
+Balanced on their light, stars are still not white in every pixel while
+their channels differ in width: the broad red channel is weaker at the
+peak and stronger in the wings, and the stretch favours the wings. On
+the Bubble, faint stars summed as blobs still had a red to green ratio
+of 1.43 (1.69 before; the Seestar's own render has 1.35). `--match-psf`
+blurs the sharper channels to the width of the widest before the
+stretch, which brings that to 0.98 and star cores to a faint blue-white,
+at the cost of some sharpness in green and blue. A master sharpened to
+one width beforehand gets the same result without the blur.
+
+The other defaults give the Heart as it was finished by hand. The knobs
+beyond them: `--sky` and `--range` set where the sky sits and how much
+range the nebula gets above it (a tone curve after the arcsinh);
+`--local-contrast` gains the 16 to 64 px layers, which brings the dark
+lanes up; `--saturation` with `--sky-chroma 0` colours the nebula and
+leaves the sky grey; `--denoise nlm` takes the grain out of the linear
+master before the stretch, shown under the same stretch as without;
+`--star-reduction` pulls the stars towards their surroundings. `--half`
+writes a half-size copy too.
 
 To judge denoised versions against each other, and against a deeper stack
 of the same field as the nearest thing to the truth:
