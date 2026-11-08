@@ -28,10 +28,11 @@ import numpy as np
 import numpy.typing as npt
 
 from quietsky.deconvolve import gaussian_blur, star_light, star_profile
-from quietsky.denoise import DEFAULT_PSF, star_footprint
+from quietsky.denoise import DEFAULT_PSF, noise_factor, star_footprint
 from quietsky.finish import measure
 from quietsky.frame import Frame, load, normalized, save_fits
 from quietsky.stars import detect_stars
+from quietsky.wavelets import b3_layers
 
 Float32 = npt.NDArray[np.float32]
 Float64 = npt.NDArray[np.float64]
@@ -49,8 +50,17 @@ STAR_GROW = 2.0
 FILL_SIGMA = 8.0
 # Pixels this far from the fit, in noise deviations, are dropped and the fit repeated.
 FIT_CLIP = 3.0
-# The OIII excess starts this many of its noise deviations above zero.
+# The OIII excess starts this many of its noise deviations above zero, and
+# is taken from the scales of this many wavelet layers up (4 px and
+# coarser), where a star too faint to be detected and masked hardly shows.
 EXCESS_SIGMA = 2.0
+EXCESS_LAYERS = 2
+# Stars are detected this many noise deviations up, for the mask; and as
+# the detector keeps the brightest few thousand only, every point-like
+# thing is masked as well: where the luminance's two finest wavelet
+# layers stand this many of their noise deviations up.
+STAR_THRESHOLD = 3.0
+POINT_SIGMA = 3.0
 
 
 def noise_of(values: Float64) -> float:
@@ -98,7 +108,7 @@ def main(argv: list[str]) -> None:
     balanced = (rgb - sky) * gains
     r, g, b = (balanced[..., c] for c in range(3))
     lum = balanced.mean(axis=2).astype(np.float32)
-    stars = detect_stars(lum)
+    stars = detect_stars(lum, STAR_THRESHOLD)
     try:
         profile = star_profile(lum, stars)
     except ValueError:
@@ -108,8 +118,14 @@ def main(argv: list[str]) -> None:
     columns = np.clip(np.rint(stars.x).astype(np.intp), 0, lum.shape[1] - 1)
     model = star_light(lum.shape, stars, lum[rows, columns].astype(np.float64), profile)
     core = star_footprint(lum, stars) > 0.02
+    layers, _ = b3_layers(lum, 2)
+    fine = (layers[0] + layers[1]).astype(np.float64)
+    fine_noise = noise_of(fine[deep & ~core])
+    point = fine > POINT_SIGMA * fine_noise
     starry = (
-        gaussian_blur((core | (model > STAR_MASK_SIGMA * noise)).astype(np.float32), STAR_GROW)
+        gaussian_blur(
+            (core | point | (model > STAR_MASK_SIGMA * noise)).astype(np.float32), STAR_GROW
+        )
         > 0.05
     )
     print(f"{len(stars)} stars; {100 * starry.mean():.1f}% of the frame masked as star light")
@@ -152,7 +168,11 @@ def main(argv: list[str]) -> None:
     # surroundings are not left out.
     starlight = np.clip(gaussian_blur(starry.astype(np.float32), 1.0), 0, 1)
     nebular = np.clip(ha, 0, None) / (np.clip(ha, 0, None) + np.clip(model, 0, None) + 1e-12)
-    excess = np.clip(oiii - EXCESS_SIGMA * oiii_noise, 0, None) * nebular
+    _, extended = b3_layers(oiii.astype(np.float32), EXCESS_LAYERS)
+    floor: float | Float64 = EXCESS_SIGMA * oiii_noise
+    if args.coverage:
+        floor = floor * noise_factor(coverage)
+    excess = np.clip(extended.astype(np.float64) - floor, 0, None) * nebular
     boosted = balanced.copy()
     boosted[..., 1] += args.boost * excess * q
     boosted[..., 2] += args.boost * excess
