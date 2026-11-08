@@ -116,7 +116,19 @@ def layer_noise(
     return sigmas
 
 
-def shrink_layers(image: Float32, sigmas: list[float], thresholds: list[float]) -> Float32:
+def noise_factor(coverage: npt.NDArray[np.integer]) -> Float64:
+    """How much noisier each pixel is than the deepest: one over the square root of its coverage.
+
+    coverage is the number of frames that reached each pixel of a master,
+    as integration writes it. The deepest pixels have a factor of one.
+    """
+    factor: Float64 = np.sqrt(coverage.max() / np.maximum(coverage, 1)).astype(np.float64)
+    return factor
+
+
+def shrink_layers(
+    image: Float32, sigmas: list[float], thresholds: list[float], factor: Float64 | None = None
+) -> Float32:
     """Shrink each wavelet layer towards zero where it is within the noise.
 
     A coefficient within threshold deviations of the layer's noise is set to
@@ -124,13 +136,14 @@ def shrink_layers(image: Float32, sigmas: list[float], thresholds: list[float]) 
     (the non-negative garrote). Unlike a soft threshold, which takes the
     whole limit off every coefficient and so dims every star and nebula by
     a little, this leaves strong coefficients nearly alone, so the residual
-    holds grain and not the shapes of the signal.
+    holds grain and not the shapes of the signal. factor scales the noise
+    per pixel (noise_factor), for a master whose depth varies.
     """
     detail, residual = b3_layers(image, len(sigmas))
     result = residual.astype(np.float64)
     for layer, sigma, threshold in zip(detail, sigmas, thresholds, strict=True):
-        limit = threshold * sigma
-        if limit <= 0:
+        limit = threshold * sigma if factor is None else threshold * sigma * factor
+        if np.all(limit <= 0):
             result += layer
             continue
         magnitude = np.abs(layer.astype(np.float64))
@@ -170,7 +183,12 @@ def star_footprint(luminance: Float32, stars: Stars | None = None) -> Float32:
 
 
 def non_local_means(
-    image: Float32, sigma: float, h: float, patch: int = NLM_PATCH, search: int = NLM_SEARCH
+    image: Float32,
+    sigma: float,
+    h: float,
+    patch: int = NLM_PATCH,
+    search: int = NLM_SEARCH,
+    factor: Float64 | None = None,
 ) -> Float32:
     """Replace each pixel by a weighted mean of the pixels whose surroundings match its own.
 
@@ -180,7 +198,9 @@ def non_local_means(
     difference exceeds what noise alone would give (2 sigma^2), on a scale
     of h^2. Pixels in sky find many matches and are averaged hard; a star
     or a filament matches only itself and its like, and is kept. sigma is
-    the pixel noise and h the width of the weighting, both in image units.
+    the pixel noise and h the width of the weighting, both in image units;
+    factor scales both per pixel (noise_factor), for a master whose depth
+    varies.
     """
     height, width = image.shape
     margin = search + patch
@@ -192,8 +212,8 @@ def non_local_means(
     ]
     total = np.ones((height, width))
     accumulated = padded[margin : margin + height, margin : margin + width].copy()
-    floor = 2 * sigma**2
-    scale = max(h, 1e-30) ** 2
+    floor = 2 * sigma**2 if factor is None else 2 * (sigma * factor) ** 2
+    scale = max(h, 1e-30) ** 2 if factor is None else np.maximum(h * factor, 1e-30) ** 2
     for dy in range(-search, search + 1):
         for dx in range(-search, search + 1):
             if dy == 0 and dx == 0:
@@ -261,6 +281,7 @@ def denoise_image(
     method: str = "wavelet",
     strength: float = NLM_STRENGTH,
     chroma_strength: float = NLM_CHROMA_STRENGTH,
+    coverage: npt.NDArray[np.integer] | None = None,
 ) -> tuple[Float32, Float32, list[Component]]:
     """Denoise a linear (H, W) or (H, W, C) image.
 
@@ -282,6 +303,12 @@ def denoise_image(
     the thresholds are then unused, and the noise by layer is reported
     over as many layers as they name.
 
+    With coverage, the number of frames that reached each pixel of the
+    master, the noise is taken as that of the deepest pixels scaled up by
+    one over the square root of each pixel's coverage, so the shallow
+    edges of a master stacked on a union canvas are cleaned as hard as
+    their noise asks and the deep middle no harder.
+
     Returns the denoised image, the mask used and the noise of each
     component by layer before and after.
     """
@@ -292,6 +319,11 @@ def denoise_image(
     if mask is None:
         mask = protection_mask(luminance)
     valid = unclipped(luminance)
+    factor = None
+    if coverage is not None:
+        factor = noise_factor(coverage)
+        # The noise by layer is that of the deepest pixels.
+        valid &= coverage >= coverage.max()
     components = []
 
     def shrink(name: str, component: Float32, limits: tuple[float, ...], width: float) -> Float32:
@@ -300,9 +332,13 @@ def denoise_image(
         before = layer_noise(component, len(limits), sky, valid)
         if method == "nlm":
             pixel = evaluate_noise(component + 0.5).sigma
-            result = non_local_means(component, pixel, width * pixel) if pixel > 0 else component
+            result = (
+                non_local_means(component, pixel, width * pixel, factor=factor)
+                if pixel > 0
+                else component
+            )
         else:
-            result = shrink_layers(component, before, list(limits))
+            result = shrink_layers(component, before, list(limits), factor)
         components.append(Component(name, before, layer_noise(result, len(limits), sky, valid)))
         return result
 

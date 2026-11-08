@@ -8,6 +8,7 @@ from quietsky.deconvolve import gaussian_blur, measure_psf
 from quietsky.denoise import (
     denoise_image,
     layer_noise,
+    noise_factor,
     non_local_means,
     protection_mask,
     shrink_layers,
@@ -271,3 +272,37 @@ def test_denoise_command_takes_the_nlm_method(tmp_path: Path) -> None:
     result = load(output).data
     assert result.shape == colour.shape
     assert evaluate_noise(result[..., 0]).sigma < 0.5 * evaluate_noise(colour[..., 0]).sigma
+
+
+def uneven_depth() -> tuple[np.ndarray, np.ndarray]:
+    """A flat sky whose right half, reached by a sixteenth of the frames, is four times as noisy."""
+    rng = np.random.default_rng(11)
+    image = np.full((160, 240), 0.02, np.float32)
+    image[:, :120] += rng.normal(0, 0.0005, (160, 120)).astype(np.float32)
+    image[:, 120:] += rng.normal(0, 0.002, (160, 120)).astype(np.float32)
+    coverage = np.full((160, 240), 16, np.int32)
+    coverage[:, 120:] = 1
+    return image, coverage
+
+
+def test_noise_factor_is_one_over_root_coverage() -> None:
+    coverage = np.array([[16, 4], [1, 0]], np.int32)
+    assert noise_factor(coverage).tolist() == [[1.0, 2.0], [4.0, 4.0]]
+
+
+@pytest.mark.parametrize("method", ["wavelet", "nlm"])
+def test_coverage_cleans_the_shallow_side_as_hard_as_its_noise_asks(method: str) -> None:
+    image, coverage = uneven_depth()
+    mask = np.ones(image.shape, np.float32)
+
+    plain, _, _ = denoise_image(image, mask=mask, method=method)
+    aware, _, _ = denoise_image(image, mask=mask, method=method, coverage=coverage)
+
+    deep, shallow = (slice(None), slice(20, 100)), (slice(None), slice(140, 220))
+    # Judged by the deep side's noise, the shallow side was left mostly alone.
+    assert aware[shallow].std() < 0.6 * plain[shallow].std()
+    # The deep side is cleaned as it would be on its own, no harder for the
+    # noisy neighbour (which inflates the plain denoise's noise estimate).
+    alone, _, _ = denoise_image(image[:, :120].copy(), mask=mask[:, :120], method=method)
+    assert aware[deep].std() == pytest.approx(alone[deep].std(), rel=0.25)
+    assert abs(aware[shallow].mean() - 0.02) < 0.0002

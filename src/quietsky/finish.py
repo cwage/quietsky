@@ -117,6 +117,8 @@ class Settings:
     gains: tuple[float, float, float] | None = None
     # Blur the sharper channels to the width of the widest before the stretch.
     match_psf: bool = False
+    # The number of frames that reached each pixel, for the denoise.
+    coverage: npt.NDArray[np.integer] | None = None
 
 
 def aperture_half(sigma: float) -> int:
@@ -193,17 +195,22 @@ def bright_pixel_colour(rgb: Float64, sky: Float64) -> Float64:
     return colour
 
 
-def measure(rgb: Float64, stars: Stars | None = None) -> tuple[Float64, float, Float64]:
+def measure(
+    rgb: Float64, stars: Stars | None = None, valid: npt.NDArray[np.bool_] | None = None
+) -> tuple[Float64, float, Float64]:
     """The sky per channel, the noise of the luminance, and the star colour gains.
 
     The sky is the median, as the frame is mostly sky and faint nebula.
     The gains make the median star's light white, each star's flux being
     summed over an aperture per channel; with too few stars to measure,
     the brightest unsaturated pixels are made to average white instead.
+    valid marks the pixels the sky and noise are taken over.
     """
-    sky = np.median(rgb, axis=(0, 1))
+    if valid is None:
+        valid = np.ones(rgb.shape[:2], np.bool_)
+    sky = np.median(rgb[valid], axis=0)
     lum = (rgb - sky).mean(axis=2)
-    noise = MAD_TO_SIGMA * float(np.median(np.abs(lum - np.median(lum))))
+    noise = MAD_TO_SIGMA * float(np.median(np.abs(lum[valid] - np.median(lum[valid]))))
     if stars is None:
         stars = detect_stars(lum.astype(np.float32))
     colour = star_colour(rgb, stars)
@@ -315,12 +322,21 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
     """The display version of a linear (H, W, 3) master, in [0, 1], and how it was made."""
     settings = settings or Settings()
     rgb = image.astype(np.float64)
-    sky, noise, gains = measure(rgb)
+    # A master is zero where no light reached it. Those pixels are filled
+    # with the sky, so that nothing measured or stretched sees an edge
+    # there, and come out black.
+    covered = rgb.max(axis=2) > 0
+    if not covered.all():
+        rgb = np.where(covered[..., None], rgb, np.median(rgb[covered], axis=0))
+        image = rgb.astype(np.float32)
+    sky, noise, gains = measure(rgb, valid=covered)
     if settings.gains is not None:
         gains = np.array(settings.gains, np.float64)
     black = BLACK_POINT * noise
     lum = ((rgb - sky) * gains).mean(axis=2)
-    top, stretch, balance = choose_stretch(lum, black, settings.sky_target, settings.range_target)
+    top, stretch, balance = choose_stretch(
+        lum[covered], black, settings.sky_target, settings.range_target
+    )
     tone = Tone(sky, noise, gains, black, top, stretch, balance)
 
     if settings.match_psf:
@@ -329,13 +345,16 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
         rgb = image.astype(np.float64)
     if settings.denoise:
         denoised, _, _ = denoise_image(
-            image, method=settings.denoise, amount=settings.denoise_amount
+            image,
+            method=settings.denoise,
+            amount=settings.denoise_amount,
+            coverage=settings.coverage,
         )
         rgb = denoised.astype(np.float64)
     rgb = (rgb - sky) * gains
     chan = np.stack([_stretch(rgb[..., c], tone) for c in range(3)], axis=-1)
     # Neutral sky: each channel's median lands on the same level.
-    chan -= np.median(chan, axis=(0, 1)) - np.median(chan)
+    chan -= np.median(chan[covered], axis=0) - np.median(chan[covered])
 
     if settings.local_contrast != 1.0:
         layers, _ = b3_layers(chan.mean(axis=2).astype(np.float32), max(LOCAL_CONTRAST_LAYERS) + 1)
@@ -365,6 +384,7 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
         out: Float64 = np.clip(grey + (chan - grey) * (1 + strength * weight[..., None]), 0, 1)
     else:
         out = np.clip(grey + (chan - grey) * (1 + strength), 0, 1)
+    out[~covered] = 0
     return out, tone
 
 

@@ -258,3 +258,46 @@ def test_defaults_reproduce_the_heart_given_its_gains() -> None:
     out, _ = finish(image, Settings(gains=tuple(bright_pixel_gains(image))))
     expected = np.asarray(Image.open(HEART / "heart.png"))
     assert np.array_equal(to_8bit(out), expected)
+
+
+def test_pixels_no_light_reached_come_out_black_and_change_nothing_else() -> None:
+    image = master()
+    whole, tone_whole = finish(image)
+    cut = image.copy()
+    cut[:70, :90] = 0  # a corner no light reached, as a union canvas has
+
+    out, tone = finish(cut)
+
+    assert (out[:70, :90] == 0).all()
+    # The synthetic master's "noise" is mostly its sky gradient, which the
+    # missing corner shifts a little; the sky and the balance hold.
+    assert tone.noise == pytest.approx(tone_whole.noise, rel=0.15)
+    assert tone.sky == pytest.approx(tone_whole.sky, rel=0.02)
+    assert tone.gains == pytest.approx(tone_whole.gains, rel=0.02)
+    # The stretch moves a little with the noise estimate; the picture does not.
+    inside = (slice(90, None), slice(110, None))
+    levels = np.abs(to_8bit(out[inside]).astype(int) - to_8bit(whole[inside]).astype(int))
+    assert np.median(levels) <= 3 and np.percentile(levels, 99) <= 12
+    # No edge is drawn where the fill meets the sky: the seam differs from
+    # the whole no more than the interior does.
+    difference = out - whole
+    seam = (slice(60, 80), slice(100, 200))
+    assert difference[seam].std() <= 1.5 * difference[inside].std() + 0.002
+
+
+def test_finish_and_denoise_commands_take_the_coverage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    image = master()
+    coverage = np.full(image.shape[:2], 8, np.int32)
+    coverage[:, 200:] = 2
+    source, cover = tmp_path / "light.fits", tmp_path / "coverage.fits"
+    save_fits(source, Frame(image))
+    save_fits(cover, Frame(coverage))
+    main(
+        ["finish", str(source), "-o", str(tmp_path / "out.png"), "--denoise", "wavelet"]
+        + ["--coverage", str(cover)]
+    )
+    assert "wrote" in capsys.readouterr().out
+    main(["denoise", str(source), "-o", str(tmp_path / "dn.fits"), "--coverage", str(cover)])
+    assert "wrote" in capsys.readouterr().out
