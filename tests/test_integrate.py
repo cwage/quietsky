@@ -1,6 +1,7 @@
 import numpy as np
 
 from quietsky.integrate import (
+    covered_box,
     flux_normalization,
     frame_estimates,
     integrate,
@@ -215,3 +216,29 @@ def test_lights_that_are_mostly_border_are_normalised_from_their_sky() -> None:
 
     assert np.isfinite(result.image).all()
     assert abs(float(result.image.mean()) - sky) < 0.002
+
+
+def test_coverage_counts_the_frames_that_reach_each_pixel() -> None:
+    stack = np.full((4, 6, 8), 0.5, np.float32)
+    stack[3, :, :4] = 0.0  # a black border down the left of one frame
+    stack[1, 2, 2] = 0.99  # saturated, but still there
+
+    result = integrate(stack, valid_range=(0.0, 0.98))
+
+    assert (result.coverage[:, :4] == 3).all() and (result.coverage[:, 4:] == 4).all()
+    assert result.coverage.dtype == np.int32
+    assert (integrate(stack).coverage == 4).all()
+
+
+def test_covered_box_is_the_rectangle_every_frame_reached() -> None:
+    coverage = np.full((20, 30), 3, np.int32)
+    coverage[:4, :] = 2  # a shallow band along the top
+    coverage[:, 25:] = 1  # and down the right
+    coverage[19, 10] = 2  # one pixel short at the bottom edge
+
+    x, y, width, height = covered_box(coverage, 3)
+
+    assert (x, y) == (0, 4)
+    assert (coverage[y : y + height, x : x + width] == 3).all()
+    assert width == 25 and height == 15
+    assert covered_box(np.zeros((5, 5), np.int32), 1) == (0, 0, 0, 0)

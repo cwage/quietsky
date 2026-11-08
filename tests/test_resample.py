@@ -4,7 +4,7 @@ import pytest
 import m13
 import synthetic
 from quietsky.register import solve_transformation
-from quietsky.resample import interpolate, resample
+from quietsky.resample import footprint, interpolate, placed, resample
 from quietsky.stars import detect_stars
 from quietsky.xisf import read_xisf
 
@@ -148,3 +148,34 @@ def test_interpolation_matches_pixinsights_registered_frame() -> None:
         2
     ]
     assert np.hypot(*moved) < 0.1
+
+
+def rotation(angle: float, shape: tuple[int, int]) -> np.ndarray:
+    """A rotation by angle degrees about the centre, as a transformation matrix."""
+    cos, sin = np.cos(np.radians(angle)), np.sin(np.radians(angle))
+    cx, cy = shape[1] / 2, shape[0] / 2
+    return np.array(
+        [[cos, -sin, cx - cos * cx + sin * cy], [sin, cos, cy - sin * cx - cos * cy], [0, 0, 1]]
+    )
+
+
+def test_footprint_holds_the_whole_input_and_placed_resamples_all_of_it() -> None:
+    shape = (120, 200)
+    rows, columns = np.mgrid[: shape[0], : shape[1]]
+    image = (1 + np.cos(rows / 9.0) * np.sin(columns / 7.0)).astype(np.float32)
+    matrix = rotation(30.0, shape)
+    x, y, width, height = footprint(matrix, shape)
+    # Each corner of the input, taken to the output, lies inside the box.
+    corners = np.array([[0, 199, 0, 199], [0, 0, 119, 119], [1, 1, 1, 1]], dtype=np.float64)
+    u, v, w = np.linalg.inv(matrix) @ corners
+    assert (u / w >= x).all() and (u / w <= x + width - 1).all()
+    assert (v / w >= y).all() and (v / w <= y + height - 1).all()
+    assert x < 0 and y < 0 and width > shape[1] and height > shape[0]
+    # Resampled over the box, the input's light is all there; cut to the
+    # reference's rectangle, the turned corners are lost.
+    whole = resample(image, placed(matrix, x, y), shape=(height, width))
+    cut = resample(image, matrix)
+    assert whole.sum() == pytest.approx(image.sum(), rel=0.03)
+    assert cut.sum() < 0.9 * image.sum()
+    # The box's own (0, 0) is the reference's (x, y): the same pixel is found at both.
+    assert whole[-y : -y + 10, -x : -x + 10] == pytest.approx(cut[:10, :10], abs=1e-5)

@@ -6,7 +6,7 @@ import pytest
 
 import m13
 from quietsky.cli import main
-from quietsky.frame import Frame, load, load_fits
+from quietsky.frame import Frame, load, load_fits, load_header
 from quietsky.pipeline import Session, preprocess
 from quietsky.stars import detect_stars
 
@@ -192,3 +192,78 @@ def test_an_interrupted_run_is_resumed(tmp_path: Path) -> None:
 
     assert sum("earlier run" in line for line in reports) == 2
     np.testing.assert_allclose(load(resumed).data, load(whole).data, rtol=1e-5, atol=1e-7)
+
+
+def test_a_union_canvas_keeps_everything_the_lights_reached(tmp_path: Path) -> None:
+    session = Session([], [], [], frames("light")[:4])
+    cut = load(preprocess(session, tmp_path / "cut", report=lambda line: None)).data
+    reports: list[str] = []
+
+    union_path = preprocess(session, tmp_path / "union", report=reports.append, canvas="union")
+
+    union = load_fits(union_path)
+    coverage = load_fits(tmp_path / "union" / "master" / "coverage.fits").data
+    x, y = -int(union.header["PLACEX"]), -int(union.header["PLACEY"])
+    assert union.data.shape[0] >= 256 and union.data.shape[1] >= 256
+    assert union.data.shape[:2] != (256, 256) or (x, y) != (0, 0)
+    assert coverage.shape == union.data.shape[:2] and coverage.max() == 4
+    assert all("placed at" in line for line in reports if "stars matched" in line)
+    assert any(line.startswith("canvas ") for line in reports)
+    # Where every light reached, the master is the one made on the reference's
+    # rectangle, but for the odd pixel whose rejection went the other way: each
+    # light's level and scale are now estimated over its whole footprint.
+    full = coverage[y : y + 256, x : x + 256] == 4
+    on_reference = union.data[y : y + 256, x : x + 256]
+    difference = np.abs(on_reference[full] - cut[full]) / cut[full]
+    assert np.median(difference) < 3e-3
+    assert np.percentile(difference, 99) < 0.02
+    # The aligned lights carry their placement, and the one that is the reference sits at (0, 0).
+    registered = sorted((tmp_path / "union" / "registered").glob("*_r.fits"))
+    places = [(load_header(p)["PLACEX"], load_header(p)["PLACEY"]) for p in registered]
+    assert places[0] == (0, 0) and any(place != (0, 0) for place in places)
+
+
+def test_an_intersection_canvas_is_the_same_depth_throughout(tmp_path: Path) -> None:
+    session = Session([], [], [], frames("light")[:4])
+
+    path = preprocess(session, tmp_path / "out", report=lambda line: None, canvas="intersection")
+
+    master = load_fits(path)
+    coverage = load_fits(tmp_path / "out" / "master" / "coverage.fits").data
+    assert master.data.shape[0] <= 256 and master.data.shape[1] <= 256
+    assert coverage.shape == master.data.shape[:2]
+    assert coverage.min() == 4
+    assert int(master.header["PLACEX"]) >= 0 and int(master.header["PLACEY"]) >= 0
+    assert (master.data > 0).all()
+
+
+def test_register_and_stack_commands_take_a_canvas(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session = Session([], [], [], frames("light")[:3])
+    preprocess(session, tmp_path / "run", report=lambda line: None)
+    registered = sorted((tmp_path / "run" / "registered").glob("*_r.fits"))
+    aligned = tmp_path / "aligned"
+
+    main(
+        ["register", str(registered[1]), "--reference", str(registered[0])]
+        + ["-o", str(aligned), "--canvas", "union"]
+    )
+
+    out = capsys.readouterr().out
+    assert "placed at" in out
+    placed = sorted(aligned.glob("*_r.fits"))
+    assert len(placed) == 1 and "PLACEX" in load_header(placed[0])
+
+    main(
+        ["stack", "--light", str(registered[0])]
+        + [str(p) for p in placed]
+        + ["-o", str(tmp_path / "light.fits")]
+        + ["--canvas", "intersection", "--coverage", str(tmp_path / "coverage.fits")]
+    )
+
+    out = capsys.readouterr().out
+    assert "canvas " in out and "wrote" in out
+    coverage = load_fits(tmp_path / "coverage.fits").data
+    assert coverage.min() == 2
+    assert load(tmp_path / "light.fits").data.shape[:2] == coverage.shape
