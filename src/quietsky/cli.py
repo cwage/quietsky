@@ -545,6 +545,8 @@ def _finish(args: argparse.Namespace) -> None:
         raise SystemExit("finish needs a colour (H, W, 3) master")
     settings = Settings(
         sky_target=args.sky,
+        black_point=args.black,
+        top_percentile=args.white,
         range_target=args.range,
         saturation=args.saturation,
         sky_chroma=args.sky_chroma,
@@ -795,6 +797,21 @@ def main(argv: list[str] | None = None) -> None:
     finish_cmd.add_argument("--half", type=Path, help="also write a half-size PNG")
     finish_cmd.add_argument(
         "--sky", type=float, default=0.13, help="where the sky median lands, 0 to 1 (default 0.13)"
+    )
+    finish_cmd.add_argument(
+        "--black",
+        type=float,
+        default=-2.5,
+        help="the black point, in noise deviations below the sky (default -2.5, nothing "
+        "clipped; -1 clips the darkest sixth of the sky's noise to black)",
+    )
+    finish_cmd.add_argument(
+        "--white",
+        type=float,
+        default=99.99,
+        help="the white point, as the percentile of the luminance that maps to white "
+        "(default 99.99, the star cores only; 99.9 gives the nebula and stars the whole "
+        "range and clips the brightest cores)",
     )
     finish_cmd.add_argument(
         "--range",
