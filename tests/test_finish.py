@@ -12,8 +12,28 @@ from quietsky.wavelets import b3_layers
 HEART = Path(os.environ.get("QUIETSKY_DATA", "/data")) / "projects" / "heart" / "three-nights"
 
 
-def master(seed: int = 0) -> np.ndarray:
-    """A linear colour master: sky with a gradient, red nebula, white stars, noise."""
+# The channels' share of the light: stars are white before this, so the
+# balance should find gains proportional to its inverse.
+CHANNEL_SCALE = (1.0, 0.9, 0.8)
+STARS = (
+    (60, 50, 0.3),
+    (250, 190, 0.2),
+    (200, 60, 0.1),
+    (90, 200, 0.05),
+    (300, 30, 0.08),
+    (30, 120, 0.06),
+    (150, 220, 0.12),
+    (280, 100, 0.04),
+)
+
+
+def master(seed: int = 0, red_sigma: float = 1.5) -> np.ndarray:
+    """A linear colour master: sky with a gradient, red nebula, white stars, noise.
+
+    The stars' light is the same in each channel before CHANNEL_SCALE;
+    red_sigma widens their profile in red, as a camera whose red channel
+    is softer does, without changing their light.
+    """
     rows, columns = np.mgrid[:240, :320].astype(np.float32)
     nebula = 0.01 * np.exp(-((rows - 120) ** 2 + (columns - 160) ** 2) / (2 * 40.0**2))
     rng = np.random.default_rng(seed)
@@ -21,24 +41,36 @@ def master(seed: int = 0) -> np.ndarray:
     for colour, tint in ((0, 1.0), (1, 0.35), (2, 0.45)):
         sky = 0.010 + 0.0004 * colour + 0.00001 * rows
         channel = sky + tint * nebula
-        for x, y, flux in ((60, 50, 0.3), (250, 190, 0.2), (200, 60, 0.1), (90, 200, 0.05)):
-            channel += flux * np.exp(-((rows - y) ** 2 + (columns - x) ** 2) / (2 * 1.5**2))
-        channel *= 1 - 0.1 * colour
+        sigma = red_sigma if colour == 0 else 1.5
+        for x, y, flux in STARS:
+            profile = np.exp(-((rows - y) ** 2 + (columns - x) ** 2) / (2 * sigma**2))
+            channel += flux * profile * (1.5 / sigma) ** 2
+        channel *= CHANNEL_SCALE[colour]
         channels.append(channel + rng.normal(0, 0.0003, channel.shape))
     result: np.ndarray = np.clip(np.stack(channels, axis=-1), 0, 1).astype(np.float32)
     return result
 
 
-def by_hand(src: np.ndarray) -> np.ndarray:
-    """The finish as the Heart script did it, line for line, as the reference."""
+def bright_pixel_gains(src: np.ndarray) -> np.ndarray:
+    """The Heart script's colour balance: the brightest unsaturated pixels average white."""
+    rgb = src.astype(np.float64)
+    sky = np.median(rgb, axis=(0, 1))
+    rgb -= sky
+    lum = rgb.mean(axis=2)
+    bright = (lum > np.percentile(lum, 99.7)) & (rgb.max(axis=2) < 0.9 - sky.max())
+    star_colour = np.median(rgb[bright] / rgb[bright].mean(axis=1, keepdims=True), axis=0)
+    result: np.ndarray = 1 / star_colour
+    return result
+
+
+def by_hand(src: np.ndarray, gains: np.ndarray) -> np.ndarray:
+    """The finish as the Heart script did it, line for line, given the colour gains."""
     rgb = src.astype(np.float64)
     sky = np.median(rgb, axis=(0, 1))
     rgb -= sky
     lum = rgb.mean(axis=2)
     noise = 1.4826 * np.median(np.abs(lum - np.median(lum)))
-    bright = (lum > np.percentile(lum, 99.7)) & (rgb.max(axis=2) < 0.9 - sky.max())
-    star_colour = np.median(rgb[bright] / rgb[bright].mean(axis=1, keepdims=True), axis=0)
-    rgb *= 1 / star_colour
+    rgb *= gains
     lum = rgb.mean(axis=2)
     black = -2.5 * noise
     top = float(np.percentile(lum, 99.99)) - black
@@ -66,9 +98,71 @@ def by_hand(src: np.ndarray) -> np.ndarray:
 def test_defaults_reproduce_the_finish_by_hand() -> None:
     image = master()
     out, tone = finish(image)
-    assert np.array_equal(to_8bit(out), by_hand(image))
+    assert np.array_equal(to_8bit(out), by_hand(image, tone.gains))
     assert tone.balance == 0.5
     assert np.median(out.mean(axis=2)) == pytest.approx(0.13, abs=0.01)
+
+
+def test_balance_makes_the_stars_white() -> None:
+    _, tone = finish(master())
+    expected = 1 / np.array(CHANNEL_SCALE)
+    assert tone.gains / tone.gains.mean() == pytest.approx(expected / expected.mean(), rel=0.02)
+
+
+def test_balance_is_on_the_whole_star_not_its_peak() -> None:
+    # Red half as wide again: the peaks hold less red than the whole stars, which are still white.
+    image = master(red_sigma=2.2)
+    _, tone = finish(image)
+    expected = 1 / np.array(CHANNEL_SCALE)
+    assert tone.gains / tone.gains.mean() == pytest.approx(expected / expected.mean(), rel=0.03)
+    peak = bright_pixel_gains(image)
+    assert peak[0] / peak[1] > 1.1 * tone.gains[0] / tone.gains[1]
+
+
+def blob_colour(out: np.ndarray, x: int, y: int) -> np.ndarray:
+    """A star's colour in the output as a blob: each channel's share of its light less the sky."""
+    window = out[y - 6 : y + 7, x - 6 : x + 7]
+    sky = np.median(out[y - 20 : y - 10, x - 20 : x + 20], axis=(0, 1))
+    light = (window - sky).sum(axis=(0, 1))
+    result: np.ndarray = light / light.mean()
+    return result
+
+
+def test_matching_the_widths_makes_every_pixel_of_a_star_white() -> None:
+    image = master(red_sigma=2.2)
+    plain, tone_plain = finish(image)
+    matched, tone = finish(image, Settings(match_psf=True))
+    assert tone.widths is not None
+    assert tone.widths[0] > tone.widths[1] + 0.5
+    x, y, _ = STARS[1]  # well away from the nebula, whose gradient a blob's sky does not cancel
+    assert blob_colour(plain, x, y)[0] > 1.08
+    assert blob_colour(matched, x, y) == pytest.approx(np.ones(3), abs=0.03)
+    # The stretch is still set on the master as it came.
+    assert (tone.stretch, tone.black, tone.gains.tolist()) == (
+        tone_plain.stretch,
+        tone_plain.black,
+        tone_plain.gains.tolist(),
+    )
+
+
+def test_gains_can_be_given() -> None:
+    image = master()
+    out, tone = finish(image, Settings(gains=(1.0, 1.1, 1.2)))
+    assert tuple(tone.gains) == (1.0, 1.1, 1.2)
+    assert np.array_equal(to_8bit(out), by_hand(image, np.array([1.0, 1.1, 1.2])))
+
+
+def test_too_few_stars_falls_back_to_the_brightest_pixels() -> None:
+    rows, columns = np.mgrid[:120, :160].astype(np.float32)
+    rng = np.random.default_rng(3)
+    channels = []
+    for colour in range(3):
+        channel = 0.01 + 0.02 * np.exp(-((rows - 60) ** 2 + (columns - 80) ** 2) / (2 * 30.0**2))
+        channel *= CHANNEL_SCALE[colour]
+        channels.append(channel + rng.normal(0, 0.0003, channel.shape))
+    starless = np.clip(np.stack(channels, axis=-1), 0, 1).astype(np.float32)
+    _, tone = finish(starless)
+    assert np.allclose(tone.gains, bright_pixel_gains(starless))
 
 
 def test_range_puts_the_nebula_where_asked() -> None:
@@ -146,15 +240,21 @@ def test_finish_command_writes_the_png(tmp_path: Path, capsys: pytest.CaptureFix
     assert output.exists() and half.exists()
     out = capsys.readouterr().out
     assert "stretch factor" in out and "wrote" in out
+    main(["finish", str(source), "-o", str(output), "--gains", "1,1.1,1.2", "--match-psf"])
+    out = capsys.readouterr().out
+    assert "colour gains [1.  1.1 1.2]" in out and "star width per channel" in out
+    with pytest.raises(SystemExit):
+        main(["finish", str(source), "-o", str(output), "--gains", "1,1"])
 
 
 @pytest.mark.nas
-def test_defaults_reproduce_the_heart() -> None:
+def test_defaults_reproduce_the_heart_given_its_gains() -> None:
+    """The Heart was balanced on its brightest pixels; with those gains the rest is the same."""
     from PIL import Image
 
     if not (HEART / "heart.png").exists():
         pytest.skip("the Heart project is not mounted")
     image = load(HEART / "light_bg_plane.fits").data
-    out, _ = finish(image)
+    out, _ = finish(image, Settings(gains=tuple(bright_pixel_gains(image))))
     expected = np.asarray(Image.open(HEART / "heart.png"))
     assert np.array_equal(to_8bit(out), expected)

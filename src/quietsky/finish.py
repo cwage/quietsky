@@ -9,20 +9,35 @@ for the nebula's range, local contrast at coarse scales, saturation that
 spares the sky, a denoise before the stretch, star reduction) are off or
 at those values until asked for.
 
+The colour is balanced on the light of whole stars, not on their peak
+pixels. The Heart script balanced the brightest pixels, which on the
+Seestar made the star cores white and everything else red: its red
+channel is a third wider than the green and blue, so the peaks hold less
+of the red light than the wings and the faint stars do. Each detected
+star's flux is measured in an aperture per channel, and the median star
+is made white.
+
 Everything that sets the stretch (sky, noise, colour gains, black point,
 stretch factor) is measured on the master as it came, so a denoise or
 any other change to the pixels is shown under the same stretch.
+
+Even balanced, a star whose channels differ in width is not white in
+every pixel: the broad channel is weaker at the peak and stronger in the
+wings, and the stretch, being concave, favours the wings. Matching the
+widths (the sharper channels blurred to the widest) before the stretch
+makes every pixel of a star the colour of its light; so does sharpening
+the master to one width beforehand.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import numpy.typing as npt
 
-from quietsky.deconvolve import local_minimum
-from quietsky.denoise import denoise_image, star_footprint
-from quietsky.stars import detect_stars
+from quietsky.deconvolve import gaussian_blur, local_minimum, measure_psf
+from quietsky.denoise import DEFAULT_PSF, denoise_image, star_footprint
+from quietsky.stars import Stars, detect_stars, windows
 from quietsky.stretch import midtones
 from quietsky.wavelets import b3_layers
 
@@ -38,10 +53,21 @@ SATURATION = 1.3
 BLACK_POINT = -2.5
 # The stretch's top: this percentile of the luminance maps to white.
 TOP_PERCENTILE = 99.99
-# Colour balance: the brightest pixels at this percentile and above, not
-# saturated, are made to average white.
-STAR_PERCENTILE = 99.7
+# Colour balance: the stars' flux is summed in a square aperture this many
+# PSF widths to each side of the centre (at least and at most the pixels
+# given), with the local sky taken from a ring this wide outside it.
+APERTURE_SIGMAS = 4.0
+APERTURE_HALF = (4, 10)
+APERTURE_RING = 3
+# A star counts if no pixel of its aperture reaches this level, and each
+# channel's flux is this many deviations above the aperture's noise.
 STAR_SATURATED = 0.9
+STAR_SNR = 10.0
+# With fewer stars than this, the brightest pixels at this percentile and
+# above, not saturated, are made to average white instead, as the Heart
+# script did.
+MIN_STARS = 5
+STAR_PERCENTILE = 99.7
 # The nebula's range is set by this percentile of the luminance.
 RANGE_PERCENTILE = 99.0
 # Saturation weighted by signal reaches its full value this many noise
@@ -51,6 +77,8 @@ CHROMA_SIGNAL = 3.0
 LOCAL_CONTRAST_LAYERS = (4, 5, 6)
 # Star reduction pulls each star towards the minimum within this radius.
 STAR_REDUCTION_RADIUS = 2
+# Channels within this many pixels of width of the widest are not blurred.
+MATCH_TOLERANCE = 0.05
 STRETCH_SEARCH = (1.0, 1e9)
 # Factors tried, on a log scale, to find where the range peaks.
 RANGE_GRID = 120
@@ -68,6 +96,8 @@ class Tone:
     top: float
     stretch: float
     balance: float
+    # The stars' width per channel, in pixels, when the widths were matched.
+    widths: Float64 | None = None
 
 
 @dataclass(frozen=True)
@@ -83,25 +113,131 @@ class Settings:
     star_reduction: float = 0.0
     denoise: str | None = None
     denoise_amount: float = 1.0
+    # Colour gains to use instead of the ones measured on the stars.
+    gains: tuple[float, float, float] | None = None
+    # Blur the sharper channels to the width of the widest before the stretch.
+    match_psf: bool = False
 
 
-def measure(rgb: Float64) -> tuple[Float64, float, Float64]:
-    """The sky per channel, the noise of the luminance, and the star colour gains.
+def aperture_half(sigma: float) -> int:
+    """Half the side of the aperture, in pixels, for stars of this width."""
+    return int(np.clip(np.ceil(APERTURE_SIGMAS * sigma), *APERTURE_HALF))
 
-    The sky is the median, as the frame is mostly sky and faint nebula.
-    The gains make the brightest unsaturated pixels, which are stars,
-    average white.
+
+def star_fluxes(rgb: Float64, stars: Stars, half: int) -> tuple[Float64, npt.NDArray[np.bool_]]:
+    """Each star's flux per channel, less the local sky, and whether its aperture is unsaturated.
+
+    The aperture is a square half pixels to each side of the star's centre
+    pixel; the local sky is the median of a ring APERTURE_RING pixels wide
+    around it. Stars too close to the edge for the ring are left out.
     """
-    sky = np.median(rgb, axis=(0, 1))
+    outer = half + APERTURE_RING
+    rows = np.rint(stars.y).astype(np.intp)
+    columns = np.rint(stars.x).astype(np.intp)
+    height, width = rgb.shape[:2]
+    inside = (
+        (rows >= outer) & (rows < height - outer) & (columns >= outer) & (columns < width - outer)
+    )
+    rows, columns = rows[inside], columns[inside]
+    offsets = np.arange(-outer, outer + 1)
+    box = (np.abs(offsets[:, None]) <= half) & (np.abs(offsets[None, :]) <= half)
+    ring = ~box
+    fluxes = np.empty((len(rows), 3))
+    unsaturated = np.ones(len(rows), bool)
+    for channel in range(3):
+        light = windows(rgb[..., channel], rows, columns, outer)
+        local = np.median(light[:, ring], axis=1)
+        fluxes[:, channel] = (light[:, box] - local[:, None]).sum(axis=1)
+        unsaturated &= light[:, box].max(axis=1) < STAR_SATURATED
+    return fluxes, unsaturated
+
+
+def star_colour(rgb: Float64, stars: Stars) -> Float64 | None:
+    """The colour of the median star, as each channel's share of its light, or None with too few.
+
+    rgb is the master with the sky still in, so saturation can be seen.
+    The aperture is sized from the stars' width in the luminance, which
+    holds all of a star in every channel even when one channel is broader
+    than the others. Stars whose flux in any channel is within STAR_SNR
+    deviations of the aperture's noise are left out, as a ratio of noisy
+    fluxes leans.
+    """
+    try:
+        sigma = measure_psf(rgb.mean(axis=2).astype(np.float32), stars)
+    except ValueError:
+        sigma = DEFAULT_PSF
+    half = aperture_half(sigma)
+    fluxes, unsaturated = star_fluxes(rgb, stars, half)
+    noise = np.array(
+        [
+            MAD_TO_SIGMA * float(np.median(np.abs(rgb[..., c] - np.median(rgb[..., c]))))
+            for c in range(3)
+        ]
+    )
+    clear = (fluxes > STAR_SNR * noise * (2 * half + 1)).all(axis=1) & unsaturated
+    if clear.sum() < MIN_STARS:
+        return None
+    fluxes = fluxes[clear]
+    colour: Float64 = np.median(fluxes / fluxes.mean(axis=1, keepdims=True), axis=0)
+    return colour
+
+
+def bright_pixel_colour(rgb: Float64, sky: Float64) -> Float64:
+    """The colour of the brightest unsaturated pixels: the Heart script's star colour."""
     rgb = rgb - sky
     lum = rgb.mean(axis=2)
-    noise = MAD_TO_SIGMA * float(np.median(np.abs(lum - np.median(lum))))
     bright = (lum > np.percentile(lum, STAR_PERCENTILE)) & (
         rgb.max(axis=2) < STAR_SATURATED - sky.max()
     )
-    star_colour = np.median(rgb[bright] / rgb[bright].mean(axis=1, keepdims=True), axis=0)
-    gains: Float64 = 1 / star_colour
+    colour: Float64 = np.median(rgb[bright] / rgb[bright].mean(axis=1, keepdims=True), axis=0)
+    return colour
+
+
+def measure(rgb: Float64, stars: Stars | None = None) -> tuple[Float64, float, Float64]:
+    """The sky per channel, the noise of the luminance, and the star colour gains.
+
+    The sky is the median, as the frame is mostly sky and faint nebula.
+    The gains make the median star's light white, each star's flux being
+    summed over an aperture per channel; with too few stars to measure,
+    the brightest unsaturated pixels are made to average white instead.
+    """
+    sky = np.median(rgb, axis=(0, 1))
+    lum = (rgb - sky).mean(axis=2)
+    noise = MAD_TO_SIGMA * float(np.median(np.abs(lum - np.median(lum))))
+    if stars is None:
+        stars = detect_stars(lum.astype(np.float32))
+    colour = star_colour(rgb, stars)
+    if colour is None:
+        colour = bright_pixel_colour(rgb, sky)
+    gains: Float64 = 1 / colour
     return sky, noise, gains
+
+
+def match_psf(image: Float32, stars: Stars | None = None) -> tuple[Float32, Float64]:
+    """The image with each channel blurred to the width of the widest, and the widths found.
+
+    A Gaussian blurred by a Gaussian is a Gaussian whose variance is the
+    sum of the two, so each channel is blurred by the width that takes it
+    to the widest. Channels whose width cannot be measured are left alone.
+    """
+    if stars is None:
+        stars = detect_stars(image.mean(axis=2))
+    widths = np.full(3, np.nan)
+    for channel in range(3):
+        try:
+            widths[channel] = measure_psf(image[..., channel], stars)
+        except ValueError:
+            pass
+    if np.isnan(widths).all():
+        return image, widths
+    widest = float(np.nanmax(widths))
+    matched = image.copy()
+    for channel in range(3):
+        if np.isnan(widths[channel]) or widths[channel] > widest - MATCH_TOLERANCE:
+            continue
+        extra = float(np.sqrt(widest**2 - widths[channel] ** 2))
+        matched[..., channel] = gaussian_blur(image[..., channel], extra)
+    return matched, widths
 
 
 def _arcsinh(values: Float64, factor: float, top: float) -> Float64:
@@ -180,11 +316,17 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
     settings = settings or Settings()
     rgb = image.astype(np.float64)
     sky, noise, gains = measure(rgb)
+    if settings.gains is not None:
+        gains = np.array(settings.gains, np.float64)
     black = BLACK_POINT * noise
     lum = ((rgb - sky) * gains).mean(axis=2)
     top, stretch, balance = choose_stretch(lum, black, settings.sky_target, settings.range_target)
     tone = Tone(sky, noise, gains, black, top, stretch, balance)
 
+    if settings.match_psf:
+        image, widths = match_psf(image)
+        tone = replace(tone, widths=widths)
+        rgb = image.astype(np.float64)
     if settings.denoise:
         denoised, _, _ = denoise_image(
             image, method=settings.denoise, amount=settings.denoise_amount

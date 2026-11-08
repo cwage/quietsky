@@ -8,6 +8,7 @@ noise are taken as stars.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -45,11 +46,14 @@ class Stars:
 
 
 def windows(
-    image: Float32, rows: npt.NDArray[np.intp], columns: npt.NDArray[np.intp], half: int
-) -> Float32:
+    image: npt.NDArray[np.floating[Any]],
+    rows: npt.NDArray[np.intp],
+    columns: npt.NDArray[np.intp],
+    half: int,
+) -> npt.NDArray[np.floating[Any]]:
     """The square of pixels around each (row, column), as an (N, size, size) array."""
     offsets = np.arange(-half, half + 1)
-    windows: Float32 = image[
+    windows: npt.NDArray[np.floating[Any]] = image[
         rows[:, None, None] + offsets[:, None], columns[:, None, None] + offsets[None, :]
     ]
     return windows
