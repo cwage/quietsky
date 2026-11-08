@@ -105,6 +105,16 @@ class Settings:
     """The knobs of a finish; the defaults give the Heart as it was finished by hand."""
 
     sky_target: float = SKY_TARGET
+    # The black point, in noise deviations below the sky: nearer than
+    # BLACK_POINT clips the dark side of the sky's noise, which deepens the
+    # blacks and, as the stretch then has less far to lift the sky, spares
+    # the stars and the nebula's cores the compression.
+    black_point: float = BLACK_POINT
+    # The white point: this percentile of the luminance maps to white. The
+    # default puts only the star cores there and squeezes the nebula into
+    # the bottom of the scale; a lower one, say 99.9, lets the nebula and
+    # the stars use the whole range and clips the brightest cores white.
+    top_percentile: float = TOP_PERCENTILE
     range_target: float | None = None
     saturation: float = SATURATION
     # How much of the saturation the sky gets: 1 the same as the nebula, 0 none.
@@ -267,7 +277,11 @@ def _balance_pinning(value: float, target: float) -> float:
 
 
 def choose_stretch(
-    lum: Float64, black: float, sky_target: float, range_target: float | None
+    lum: Float64,
+    black: float,
+    sky_target: float,
+    range_target: float | None,
+    top_percentile: float = TOP_PERCENTILE,
 ) -> tuple[float, float, float]:
     """The arcsinh factor and midtones balance that put the sky and the nebula where asked.
 
@@ -282,7 +296,7 @@ def choose_stretch(
     factor is searched on the falling side, which continues from the
     plain arcsinh, and a range beyond the peak gets the peak.
     """
-    top = float(np.percentile(lum, TOP_PERCENTILE)) - black
+    top = float(np.percentile(lum, top_percentile)) - black
     level = float(np.median(lum)) - black
     low, high = STRETCH_SEARCH
 
@@ -333,10 +347,10 @@ def finish(image: Float32, settings: Settings | None = None) -> tuple[Float64, T
     sky, noise, gains = measure(rgb, valid=covered)
     if settings.gains is not None:
         gains = np.array(settings.gains, np.float64)
-    black = BLACK_POINT * noise
+    black = settings.black_point * noise
     lum = ((rgb - sky) * gains).mean(axis=2)
     top, stretch, balance = choose_stretch(
-        lum[covered], black, settings.sky_target, settings.range_target
+        lum[covered], black, settings.sky_target, settings.range_target, settings.top_percentile
     )
     tone = Tone(sky, noise, gains, black, top, stretch, balance)
 

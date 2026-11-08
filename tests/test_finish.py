@@ -301,3 +301,29 @@ def test_finish_and_denoise_commands_take_the_coverage(
     assert "wrote" in capsys.readouterr().out
     main(["denoise", str(source), "-o", str(tmp_path / "dn.fits"), "--coverage", str(cover)])
     assert "wrote" in capsys.readouterr().out
+
+
+def test_a_nearer_black_point_clips_the_dark_side_of_the_sky() -> None:
+    image = master()
+    deep, tone_deep = finish(image)
+    near, tone_near = finish(image, Settings(black_point=-1.0))
+    assert tone_near.black == pytest.approx(-1.0 * tone_near.noise)
+    assert np.median(near.mean(axis=2)) == pytest.approx(0.13, abs=0.01)
+    # Some of the sky's dark side is clipped to black now; none was before.
+    sky = (slice(0, 40), slice(0, 60))
+    assert (near[sky] == 0).mean() > 0.02
+    assert (deep[sky] == 0).mean() < 0.001
+
+
+def test_a_lower_white_point_gives_the_nebula_and_stars_the_range() -> None:
+    image = master()
+    cores, tone_cores = finish(image)
+    wide, tone_wide = finish(image, Settings(top_percentile=99.9))
+    assert tone_wide.top < tone_cores.top
+    assert np.median(wide.mean(axis=2)) == pytest.approx(0.13, abs=0.01)
+    # The stretch has less far to go, so the mid-tones are less compressed.
+    assert tone_wide.stretch < tone_cores.stretch
+    nebula = (slice(100, 140), slice(140, 180))
+    assert wide[nebula].mean() > cores[nebula].mean()
+    # The brightest star cores clip to white, which they did not before.
+    assert (wide == 1).mean() > (cores == 1).mean()
