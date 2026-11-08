@@ -327,3 +327,13 @@ def test_a_lower_white_point_gives_the_nebula_and_stars_the_range() -> None:
     assert wide[nebula].mean() > cores[nebula].mean()
     # The brightest star cores clip to white, which they did not before.
     assert (wide == 1).mean() > (cores == 1).mean()
+
+
+def test_a_saturated_star_core_comes_out_white() -> None:
+    image = master()
+    x, y, _ = STARS[0]
+    image[y - 1 : y + 2, x - 1 : x + 2] = 1.0  # clipped in the camera, in every channel
+    out, tone = finish(image)
+    assert tone.gains.max() / tone.gains.min() > 1.1
+    core = out[y, x]
+    assert core.max() == pytest.approx(core.min(), abs=1e-6)
