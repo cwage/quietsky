@@ -99,6 +99,13 @@ def main(argv: list[str]) -> None:
         "--frame", type=Path, help="the full master frame the crop was cut from, to register onto"
     )
     parser.add_argument("--compare", type=Path, help="directory for the same-crop comparison")
+    parser.add_argument(
+        "--one-scale",
+        action="store_true",
+        help="scale every channel by the red channel's nebula slope, so a master whose green "
+        "and blue were changed on purpose (an OIII boost) keeps that change; by default each "
+        "channel is scaled to the scope's own nebula colour",
+    )
     args = parser.parse_args(argv)
 
     scope = normalized(load(args.scope_fits).data).astype(np.float64)
@@ -167,6 +174,8 @@ def main(argv: list[str]) -> None:
     )
 
     nebula_scale = np.array(scales)
+    if args.one_scale:
+        nebula_scale = np.full(3, scales[0])
     white_scale = (1 - scope_sky) / (1 - master_sky)
     low, high = STAR_BLEND
     blend = np.clip((master.max(axis=2) - low) / (high - low), 0, 1)[..., None]

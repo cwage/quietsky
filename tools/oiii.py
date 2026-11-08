@@ -74,6 +74,12 @@ def main(argv: list[str]) -> None:
         "--boost", type=float, default=2.0, help="how many times over the OIII excess is added"
     )
     parser.add_argument("--oiii", type=Path, help="also write the starless OIII map")
+    parser.add_argument(
+        "--coverage",
+        type=Path,
+        help="the master's coverage.fits: the fit and the noise are taken on the deepest "
+        "half of the frame, as a union canvas's shallow edges would swamp them",
+    )
     parser.add_argument("--hoo", type=Path, help="also write a bicolour, Hα red and OIII teal")
     parser.add_argument(
         "--smooth", type=float, default=1.0, help="sigma, px, the OIII map is smoothed by"
@@ -84,7 +90,11 @@ def main(argv: list[str]) -> None:
     image = normalized(load(args.master).data)
     rgb = image.astype(np.float64)
     covered = rgb.max(axis=2) > 0
-    sky, noise, gains = measure(rgb, valid=covered)
+    deep = covered
+    if args.coverage:
+        coverage = load(args.coverage).data
+        deep = covered & (coverage >= coverage.max() / 2)
+    sky, noise, gains = measure(rgb, valid=deep)
     balanced = (rgb - sky) * gains
     r, g, b = (balanced[..., c] for c in range(3))
     lum = balanced.mean(axis=2).astype(np.float32)
@@ -103,7 +113,7 @@ def main(argv: list[str]) -> None:
         > 0.05
     )
     print(f"{len(stars)} stars; {100 * starry.mean():.1f}% of the frame masked as star light")
-    nebula = covered & ~starry & (lum > NEBULA_SIGNAL * noise)
+    nebula = deep & ~starry & (lum > NEBULA_SIGNAL * noise)
     print(f"balanced on the stars, gains {gains.round(3)}; {int(nebula.sum())} nebula pixels")
 
     # G = k R + q B on the nebula, outliers (OIII knots, star halos) clipped.
@@ -119,7 +129,7 @@ def main(argv: list[str]) -> None:
     # OIII from blue and from green less the leak, weighted by their noise.
     oiii_b = b
     oiii_g = (g - k * r) / max(q, 1e-6)
-    empty = covered & ~starry & (np.abs(lum) < 2 * noise)
+    empty = deep & ~starry & (np.abs(lum) < 2 * noise)
     var_b, var_g = noise_of(oiii_b[empty]) ** 2, noise_of(oiii_g[empty]) ** 2
     oiii = (oiii_b / var_b + oiii_g / var_g) / (1 / var_b + 1 / var_g)
     oiii = filled(oiii, starry | ~covered, FILL_SIGMA)
