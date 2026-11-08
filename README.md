@@ -82,6 +82,13 @@ the brightness, as the eye forgives smooth colour. `--threshold` and
 of the grain, `--mask` takes your own mask, and `--residual` writes what
 was taken out, which should look like grain and nothing else.
 
+On a master stacked with `--canvas union` the edges are shallower than
+the middle; `--coverage master/coverage.fits` scales the noise per pixel
+by one over the square root of the coverage, so the edges are cleaned as
+hard as their noise asks and the middle no harder. The finish takes the
+same option for the denoise it runs, and leaves black wherever no light
+reached.
+
 `--method nlm` uses non-local means instead: each pixel becomes a
 weighted mean of the pixels whose surroundings match its own, so sky
 averages with sky from anywhere nearby while a star or a filament keeps

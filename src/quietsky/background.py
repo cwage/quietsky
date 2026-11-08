@@ -231,6 +231,8 @@ def extract_background(
     )
     level = np.median(background, axis=(0, 1))
     corrected: Float32 = (channels - background + level).astype(np.float32)
+    # A registered master is zero where no light reached; it stays so.
+    corrected[(channels <= 0).all(axis=-1)] = 0
     if image.ndim == 2:
         return corrected[..., 0], background[..., 0], samples
     return corrected, background, samples

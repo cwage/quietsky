@@ -226,3 +226,16 @@ def test_automatic_background_agrees_with_pixinsights_on_m27() -> None:
         # About 5% of the model's range, 2% of the pixel noise, when written.
         assert np.sqrt((difference**2).mean()) < 0.08 * np.ptp(expected[..., channel])
         assert np.corrcoef(ours[::8, ::8].ravel(), expected[::8, ::8, channel].ravel())[0, 1] > 0.95
+
+
+def test_pixels_no_light_reached_stay_zero() -> None:
+    rows, columns = np.mgrid[:200, :300].astype(np.float32)
+    gradient = 0.01 + 0.00002 * columns + 0.000005 * rows
+    image = np.stack([gradient * (1 + 0.1 * c) for c in range(3)], axis=-1).astype(np.float32)
+    image[:60, :80] = 0  # a corner no light reached
+
+    corrected, _, _ = extract_background(image)
+
+    assert (corrected[:60, :80] == 0).all()
+    assert (corrected[60:, 80:] > 0).all()
+    assert corrected[100:, 100:].std() < image[100:, 100:].std()

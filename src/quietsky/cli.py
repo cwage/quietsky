@@ -498,6 +498,7 @@ def _denoise(args: argparse.Namespace) -> None:
         args.method,
         args.strength,
         args.chroma_strength,
+        coverage=_coverage(args.coverage),
     )
     for component in components:
         before = ", ".join(f"{sigma:.3g}" for sigma in component.before)
@@ -516,6 +517,13 @@ def _denoise(args: argparse.Namespace) -> None:
         stretched = autostretch(cleaned, reference=data)
         Image.fromarray((stretched * 255 + 0.5).astype(np.uint8)).save(args.png)
         print(f"wrote {args.png}")
+
+
+def _coverage(path: Path | None) -> npt.NDArray[np.int32] | None:
+    """The number of frames that reached each pixel, as integration wrote it."""
+    if path is None:
+        return None
+    return load(path).data.astype(np.int32)
 
 
 def _three_floats(text: str) -> tuple[float, float, float]:
@@ -546,6 +554,7 @@ def _finish(args: argparse.Namespace) -> None:
         denoise_amount=args.denoise_amount,
         gains=args.gains,
         match_psf=args.match_psf,
+        coverage=_coverage(args.coverage),
     )
     out, tone = finish(data, settings)
     print(
@@ -829,6 +838,11 @@ def main(argv: list[str] | None = None) -> None:
         help="colour gains R,G,B to use instead of the ones measured on the stars",
     )
     finish_cmd.add_argument(
+        "--coverage",
+        type=Path,
+        help="the master's coverage.fits, so the denoise cleans its shallow edges harder",
+    )
+    finish_cmd.add_argument(
         "--match-psf",
         action="store_true",
         help="blur the sharper channels to the width of the widest before the stretch, "
@@ -908,6 +922,12 @@ def main(argv: list[str] | None = None) -> None:
     denoise_cmd.add_argument("--mask-output", type=Path, help="also write the mask used")
     denoise_cmd.add_argument("--residual", type=Path, help="also write input minus output")
     denoise_cmd.add_argument("--png", type=Path, help="also write an auto-stretched PNG")
+    denoise_cmd.add_argument(
+        "--coverage",
+        type=Path,
+        help="the master's coverage.fits: the shallow edges of a master stacked on a union "
+        "canvas are cleaned as hard as their noise asks",
+    )
     denoise_cmd.set_defaults(run=_denoise)
 
     sharpen_cmd = commands.add_parser(
