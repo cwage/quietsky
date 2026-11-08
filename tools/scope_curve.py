@@ -21,7 +21,6 @@ master renders through the same curve.
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -31,7 +30,7 @@ from quietsky.deconvolve import local_minimum
 from quietsky.denoise import star_footprint
 from quietsky.frame import Frame, load, normalized, save_fits
 from quietsky.register import solve_transformation
-from quietsky.resample import resample
+from quietsky.resample import placed, resample
 from quietsky.stars import detect_stars
 
 Float32 = npt.NDArray[np.float32]
@@ -84,11 +83,6 @@ def apply_curve(values: Float64, curves: list[tuple[Float64, Float64]]) -> Float
     return out
 
 
-def box(image: npt.NDArray[Any], region: tuple[int, int, int, int]) -> npt.NDArray[Any]:
-    x, y, w, h = region
-    return image[y : y + h, x : x + w]
-
-
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("scope_fits", type=Path)
@@ -125,14 +119,26 @@ def main(argv: list[str]) -> None:
     frame_path = args.frame or args.master
     frame = normalized(load(frame_path).data)
     reference = detect_stars(frame)
-    crop = args.master_crop or (0, 0, master.shape[1], master.shape[0])
+    # Where the master's pixel (0, 0) sits on the frame the scope is
+    # registered to: its placement, when it was stacked on a wider canvas
+    # (PLACEX, PLACEY), else its crop, else the frame itself.
+    header = load(args.master).header
+    if args.frame and "PLACEX" in header:
+        origin = (int(header["PLACEX"]), int(header["PLACEY"]))
+    elif args.master_crop:
+        origin = (args.master_crop[0], args.master_crop[1])
+    else:
+        origin = (0, 0)
     transformation = solve_transformation(
         reference, detect_stars(normalized(load(args.scope_fits).data))
     )
-    print(f"scope registered: {transformation.pairs} stars, rms {transformation.rms:.2f} px")
-    aligned = box(resample(scope.astype(np.float32), transformation.matrix), crop).astype(
-        np.float64
+    print(
+        f"scope registered to the frame: {transformation.pairs} stars, "
+        f"rms {transformation.rms:.2f} px; the master's (0, 0) is the frame's {origin}"
     )
+    matrix = placed(transformation.matrix, *origin)
+    canvas = master.shape[:2]
+    aligned = resample(scope.astype(np.float32), matrix, shape=canvas).astype(np.float64)
     covered = (
         local_minimum(
             ((aligned.min(axis=2) > 0) & (master.min(axis=2) > 0)).astype(np.float32), BORDER
@@ -173,7 +179,7 @@ def main(argv: list[str]) -> None:
 
     if args.compare:
         args.compare.mkdir(parents=True, exist_ok=True)
-        jpg_aligned = box(resample(jpg.astype(np.float32), transformation.matrix), crop)
+        jpg_aligned = resample(jpg.astype(np.float32), matrix, shape=canvas)
         Image.fromarray((np.clip(jpg_aligned, 0, 1) * 255 + 0.5).astype(np.uint8)).save(
             args.compare / "scope-jpg-registered.png"
         )
